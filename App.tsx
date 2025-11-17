@@ -104,1147 +104,689 @@ const App: React.FC = () => {
         document.title = fallbackName;
       }
 
-      // Carregar galeria de imagens do IndexedDB
-      const loadedGallery = await loadImageGallery();
-      if (loadedGallery) {
-        setEnhancedImageHistory(loadedGallery);
-      }
+      // Carregar galeria de imagens
+      const gallery = await loadImageGallery();
+      if (gallery) setEnhancedImageHistory(gallery);
 
-      // Carregar conversas do IndexedDB
+      // Carregar conversas
       const loadedConversations = await loadConversations();
+      const loadedActiveId = loadActiveConversationId();
+      
       if (loadedConversations.length > 0) {
         setConversations(loadedConversations);
-        const lastActiveId = loadActiveConversationId();
-        const activeId = loadedConversations.some(c => c.id === lastActiveId) 
-            ? lastActiveId 
-            : loadedConversations[0].id;
-        setActiveConversationId(activeId);
+        if (loadedActiveId && loadedConversations.some(c => c.id === loadedActiveId)) {
+          setActiveConversationId(loadedActiveId);
+        } else {
+          setActiveConversationId(loadedConversations[0].id);
+        }
       } else {
-        handleNewChat();
-      }
-    };
-    
-    loadInitialData();
-  }, []);
-
-  // Effect to scroll to the top of the chat when a conversation is loaded.
-  useEffect(() => {
-    setChatExplicitlyStarted(false);
-    if (chatHistoryRef.current) {
-      chatHistoryRef.current.scrollTop = 0;
-    }
-  }, [activeConversationId]);
-
-  // Effect to scroll to the bottom of the chat ONLY when a new message is added.
-  useEffect(() => {
-    if (shouldScrollToBottom && chatHistoryRef.current) {
-      setTimeout(() => {
-        chatHistoryRef.current?.scrollTo({
-          top: chatHistoryRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
-        setShouldScrollToBottom(false); // Reset the trigger
-      }, 100);
-    }
-  }, [shouldScrollToBottom, activeConversationMessages]); // Depend on messages to ensure DOM is updated before scrolling
-  
-  // Save conversations to IndexedDB on changes
-  useEffect(() => {
-    if (isInitialMount.current) return;
-    const save = async () => {
-        const conversationsToPersist = conversations.filter(convo => 
-            convo.messages.length > 1 || 
-            (convo.messages.length === 1 && convo.messages[0].type !== 'system-info')
-        );
-        if (conversationsToPersist.length > 0 || conversations.length === 0) {
-          await saveConversations(conversationsToPersist);
-        }
-    };
-    save();
-  }, [conversations]);
-
-  useEffect(() => {
-     saveActiveConversationId(activeConversationId);
-  }, [activeConversationId]);
-  
-  // Salvar galeria no IndexedDB quando mudar
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    const saveGallery = async () => {
-      await saveImageGallery(enhancedImageHistory);
-    };
-    saveGallery();
-  }, [enhancedImageHistory]);
-  
-  // CORREÇÃO: Os hooks que geriam o ciclo de vida dos Blob URLs foram removidos.
-  // A revogação agressiva dos URLs estava a causar uma "race condition" com a lógica de
-  // gravação no IndexedDB, resultando em erros "Failed to fetch". Ao remover esta lógica,
-  // os URLs dos blobs permanecem válidos durante toda a sessão, resolvendo o erro de gravação.
-  // A memória será libertada pelo navegador quando a página for fechada.
-
-  const addMessage = useCallback((message: ChatMessage) => {
-    sendToDiscordApi(message).catch(e => console.error("Falha ao enviar mensagem para o backend:", e));
-    
-    setConversations(prev => {
-        const newConversations = [...prev];
-        const activeConvoIndex = newConversations.findIndex(c => c.id === activeConversationId);
-        if (activeConvoIndex !== -1) {
-            const activeConvo = { ...newConversations[activeConvoIndex] };
-            const isFirstUserMessage = activeConvo.messages.length <= 1;
-            
-            if (isFirstUserMessage && message.sender === 'user' && (message.content || message.imageUrls)) {
-                 activeConvo.title = (message.content || 'Imagem Enviada').substring(0, 40);
-                 if (activeConvo.title.length === 40) activeConvo.title += '...';
-                 activeConvo.messages = [message];
-            } else {
-                 activeConvo.messages = [...activeConvo.messages, message];
-            }
-            activeConvo.lastModified = new Date();
-            newConversations[activeConvoIndex] = activeConvo;
-        }
-        return newConversations;
-    });
-    setShouldScrollToBottom(true);
-  }, [activeConversationId]);
-  
-  const handleNewChat = useCallback(() => {
-      const newId = uuidv4();
-      const newConversation: Conversation = {
-          id: newId,
+        // Se não houver conversas, criar uma nova
+        const newConversationId = uuidv4();
+        const newConversation: Conversation = {
+          id: newConversationId,
           title: "Nova Conversa",
           messages: [createWelcomeMessage()],
           lastModified: new Date(),
-      };
-      setConversations(prev => [...prev, newConversation]);
-      setActiveConversationId(newId);
-      setCurrentView('chat');
-  }, []);
-
-  const handleStartChat = () => {
-    setChatExplicitlyStarted(true);
-    setConversations(prev => {
-        const newConversations = [...prev];
-        const activeConvoIndex = newConversations.findIndex(c => c.id === activeConversationId);
-        if (activeConvoIndex !== -1) {
-            const activeConvo = { ...newConversations[activeConvoIndex] };
-            if (activeConvo.messages.length === 1 && activeConvo.messages[0].type === 'system-info') {
-                activeConvo.messages = [];
-            }
-            newConversations[activeConvoIndex] = activeConvo;
-        }
-        return newConversations;
-    });
-  };
-
-  const handleSelectConversation = useCallback((id: string) => {
-      setActiveConversationId(id);
-      setCurrentView('chat');
-  }, []);
-
-  const performDeleteConversation = useCallback((idToDelete: string) => {
-    setConversations(prevConversations => {
-      const remaining = prevConversations.filter(c => c.id !== idToDelete);
-      
-      if (activeConversationId === idToDelete) {
-        if (remaining.length > 0) {
-          const sorted = [...remaining].sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
-          setActiveConversationId(sorted[0].id);
-        }
+        };
+        setConversations([newConversation]);
+        setActiveConversationId(newConversationId);
       }
-      return remaining;
-    });
-    setConversations(currentConvos => {
-        if (currentConvos.length === 0) {
-            handleNewChat();
+    };
+    loadInitialData();
+  }, []);
+  
+  // Efeito para guardar conversas e galeria sempre que mudarem
+  useEffect(() => {
+    if (!isInitialMount.current) {
+      saveConversations(conversations);
+      saveImageGallery(enhancedImageHistory);
+      saveActiveConversationId(activeConversationId);
+    } else {
+      isInitialMount.current = false;
+    }
+  }, [conversations, enhancedImageHistory, activeConversationId]);
+  
+  // Scroll para o final do chat
+  useEffect(() => {
+    if (shouldScrollToBottom && chatHistoryRef.current) {
+        chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
+        setShouldScrollToBottom(false);
+    }
+  }, [shouldScrollToBottom, activeConversationMessages]);
+
+  const addMessageToConversation = useCallback((message: ChatMessage) => {
+    setConversations(prev =>
+      prev.map(convo => {
+        if (convo.id === activeConversationId) {
+          // Remover o indicador de carregamento, se existir
+          const newMessages = convo.messages.filter(m => m.type !== 'loading-indicator');
+          const updatedConvo = {
+            ...convo,
+            messages: [...newMessages, message],
+            lastModified: new Date(),
+          };
+          // Se for uma mensagem do utilizador, atualizar o título da conversa
+          if (message.sender === 'user' && (convo.messages.length <= 1 || convo.title === "Nova Conversa")) {
+            const newTitle = message.content?.substring(0, 30) || 'Conversa de Imagem';
+            updatedConvo.title = newTitle;
+          }
+          return updatedConvo;
         }
-        return currentConvos;
-    });
-  }, [activeConversationId, handleNewChat]);
+        return convo;
+      })
+    );
+    sendToDiscordApi(message);
+    setShouldScrollToBottom(true);
+  }, [activeConversationId]);
 
-
-  const handleDeleteConversationRequest = useCallback((id: string, title: string) => {
-    setConfirmationAction({
-        title: "Apagar Conversa",
-        message: `Tem a certeza de que pretende apagar permanentemente a conversa "${title}"?`,
-        onConfirm: () => performDeleteConversation(id),
-    });
-  }, [performDeleteConversation]);
-
-
-  const performClearData = useCallback(async () => {
-    await clearAllData();
-    setEnhancedImageHistory([]);
-    setConversations([]);
-    handleNewChat();
-  }, [handleNewChat]);
-
-  const handleClearDataRequest = useCallback(() => {
-    setConfirmationAction({
-      title: "Limpar Todos os Dados",
-      message: "Tem a certeza de que pretende apagar permanentemente todas as suas conversas e imagens guardadas? Esta ação não pode ser desfeita.",
-      onConfirm: async () => await performClearData(),
-    });
-  }, [performClearData]);
-  
-  const createNewHistoryEntry = (
-    originalSrc: string,
-    enhancedSrc: string,
-    mimeType: string,
-    prompt: string
-  ): EnhancedImageHistoryEntry => {
-    return {
-      id: uuidv4(),
-      originalImageSrc: originalSrc,
-      enhancedImageSrc: enhancedSrc,
-      uncroppedEnhancedImageSrc: enhancedSrc,
-      imageMimeType: mimeType,
-      promptUsed: prompt,
-      timestamp: new Date(),
-      appliedFilter: ImageFilter.NONE,
-      appliedBrightness: 100,
-      appliedContrast: 100,
-      appliedSocialMediaFilter: SocialMediaFilter.NONE,
-      appliedSocialMediaFilterIntensity: 100,
-      appliedAIFilter: AIFilter.NONE,
-    };
-  };
-
-  const handleOpenAnimateImageModal = async () => {
-    try {
-        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            if (!hasKey) {
-                if (typeof window.aistudio.openSelectKey === 'function') {
-                    await window.aistudio.openSelectKey();
-                    setIsAnimateImageModalOpen(true);
-                    return;
-                }
-            }
-        }
-        setIsAnimateImageModalOpen(true);
-    } catch (error) {
-        console.error("Error checking for Veo API key:", error);
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: 'Erro ao verificar a chave de API para o Veo.', timestamp: new Date() });
-    }
-  };
-
-  const handleAnimateImage = useCallback(async (imageFile: File, prompt: string | null, aspectRatio: '16:9' | '9:16') => {
-    setIsAnimateImageModalOpen(false);
-
-    const readAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-      reader.readAsDataURL(file);
-    });
-
-    const imageUrl = await readAsDataURL(imageFile);
-
-    const userMessage: ChatMessage = {
-        id: uuidv4(),
-        sender: 'user',
-        type: 'image-upload',
-        imageUrls: [imageUrl],
-        content: `Solicitação de Animação com Veo (Prompt: ${prompt || 'nenhum'})`,
-        promptUsed: "__ANIMATE_IMAGE__",
-        timestamp: new Date(),
-    };
-  
-    addMessage(userMessage);
-  
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a animar a sua imagem... Este processo pode demorar alguns minutos.', timestamp: new Date() });
-    
-    try {
-        const imageBase64 = imageUrl.split(',')[1];
-        const videoDataUrl = await animateImageWithVeo(imageBase64, imageFile.type, prompt, aspectRatio);
-
-        addMessage({
-            id: uuidv4(), 
-            sender: 'ai', 
-            type: 'video-generated',
-            videoUrl: videoDataUrl,
-            content: `Animação concluída!`, 
-            timestamp: new Date(),
-        });
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido ao gerar o vídeo.";
-        if (err instanceof Error && err.message.includes('Requested entity was not found')) {
-            addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: 'A sua chave de API para o Veo pode ser inválida. Clique novamente na ferramenta "Animar Imagem com Veo" para selecionar uma chave válida. Saiba mais em ai.google.dev/gemini-api/docs/billing.', timestamp: new Date() });
-            if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-                window.aistudio.openSelectKey();
-            }
-        } else {
-            addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-        }
-    } finally {
-        setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-
-  
-  const handlePerformClothingSwap = useCallback(async (personFile: File, clothingFile: File) => {
-    setIsClothingSwapSelectionModalOpen(false);
-  
-    const readAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-      reader.readAsDataURL(file);
-    });
-  
-    const [personImageUrl, clothingImageUrl] = await Promise.all([readAsDataURL(personFile), readAsDataURL(clothingFile)]);
-    
-    const userMessage: ChatMessage = {
-        id: uuidv4(),
-        sender: 'user',
-        type: 'image-upload',
-        imageUrls: [personImageUrl, clothingImageUrl],
-        content: "Solicitação de Troca de Roupa",
-        promptUsed: "__SWAP_CLOTHING__",
-        timestamp: new Date(),
-    };
-  
-    addMessage(userMessage);
-  
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a trocar a roupa...', timestamp: new Date() });
-    
-    try {
-        const personBase64 = personImageUrl.split(',')[1];
-        const clothingBase64 = clothingImageUrl.split(',')[1];
-        const resultBase64 = await swapClothing(personBase64, personFile.type, clothingBase64, clothingFile.type);
-        const resultImageUrl = `data:${personFile.type};base64,${resultBase64}`;
-        
-        const newHistoryEntry = createNewHistoryEntry(personImageUrl, resultImageUrl, personFile.type, "Troca de Roupa");
-        setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-        
-        addMessage({
-            id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-            imageUrls: [resultImageUrl], imageMimeType: personFile.type,
-            content: `Troca de roupa concluída! (Clique para editar)`, promptUsed: "Troca de Roupa", timestamp: new Date(),
-        });
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-        setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-  
-  const handlePerformFaceSwap = useCallback(async (targetFile: File, sourceFile: File) => {
-    setIsFaceSwapModalOpen(false);
-  
-    const readAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-      reader.readAsDataURL(file);
-    });
-  
-    const [targetImageUrl, sourceImageUrl] = await Promise.all([readAsDataURL(targetFile), readAsDataURL(sourceFile)]);
-  
-    const userMessage: ChatMessage = {
-        id: uuidv4(),
-        sender: 'user',
-        type: 'image-upload',
-        imageUrls: [targetImageUrl, sourceImageUrl],
-        content: "Solicitação de Troca de Rosto",
-        promptUsed: "__SWAP_FACE__",
-        timestamp: new Date(),
-    };
-  
-    addMessage(userMessage);
-  
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a trocar o rosto...', timestamp: new Date() });
-    
-    try {
-        const resultBase64 = await swapFace(targetImageUrl, sourceImageUrl);
-        const resultImageUrl = `data:${targetFile.type};base64,${resultBase64}`;
-        
-        const newHistoryEntry = createNewHistoryEntry(targetImageUrl, resultImageUrl, targetFile.type, "Troca de Rosto");
-        setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-
-        addMessage({
-            id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-            imageUrls: [resultImageUrl], imageMimeType: targetFile.type,
-            content: `Troca de rosto concluída! (Clique para editar)`, promptUsed: "Troca de Rosto", timestamp: new Date(),
-        });
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-        setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-
-  const handlePerformFaceTreatment = useCallback(async (imageFile: File) => {
-    setIsFaceTreatmentModalOpen(false);
-
-    const readAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-      reader.readAsDataURL(file);
-    });
-
-    const imageUrl = await readAsDataURL(imageFile);
-
-    const userMessage: ChatMessage = {
-        id: uuidv4(),
-        sender: 'user',
-        type: 'image-upload',
-        imageUrls: [imageUrl],
-        content: "Solicitação de Tratamento de Pele e Rosto",
-        promptUsed: "__FACE_TREATMENT__",
-        timestamp: new Date(),
-    };
-  
-    addMessage(userMessage);
-  
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a tratar a imagem...', timestamp: new Date() });
-    
-    try {
-        const imageBase64 = imageUrl.split(',')[1];
-        const resultBase64 = await performFaceTreatment(imageBase64, imageFile.type);
-        const resultImageUrl = `data:${imageFile.type};base64,${resultBase64}`;
-        
-        const newHistoryEntry = createNewHistoryEntry(imageUrl, resultImageUrl, imageFile.type, "Tratamento de Pele e Rosto");
-        setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-
-        addMessage({
-            id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-            imageUrls: [resultImageUrl], imageMimeType: imageFile.type,
-            content: `Tratamento de pele e rosto concluído! (Clique para editar)`, promptUsed: "Tratamento de Pele e Rosto", timestamp: new Date(),
-        });
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-        setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-
-  const handlePerformBackgroundChange = useCallback(async (imageFile: File, prompt: string) => {
-    setIsChangeBackgroundModalOpen(false);
-
-    const readAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = error => reject(error);
-        reader.readAsDataURL(file);
-    });
-
-    const imageUrl = await readAsDataURL(imageFile);
-
-    const userMessage: ChatMessage = {
-        id: uuidv4(),
-        sender: 'user',
-        type: 'image-upload',
-        imageUrls: [imageUrl],
-        content: `Alterar fundo para: "${prompt}"`,
-        promptUsed: "__CHANGE_BACKGROUND__",
-        timestamp: new Date(),
-    };
-
-    addMessage(userMessage);
-
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a alterar o fundo...', timestamp: new Date() });
-    
-    try {
-        const imageBase64 = imageUrl.split(',')[1];
-        const resultBase64 = await changeImageBackground(imageBase64, imageFile.type, prompt);
-        const resultImageUrl = `data:${imageFile.type};base64,${resultBase64}`;
-        
-        const newHistoryEntry = createNewHistoryEntry(imageUrl, resultImageUrl, imageFile.type, `Fundo alterado para: ${prompt}`);
-        setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-
-        addMessage({
-            id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-            imageUrls: [resultImageUrl], imageMimeType: imageFile.type,
-            content: `Fundo alterado com sucesso! (Clique para editar)`, promptUsed: `Fundo alterado para: ${prompt}`, timestamp: new Date(),
-        });
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-        setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-
-  const handlePerformAgeChange = useCallback(async (imageFile: File, currentAge: number, desiredAge: number, mode: 'rejuvenate' | 'age') => {
-    setIsAgeChangeModalOpen(false);
-    
-    const readAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-      reader.readAsDataURL(file);
-    });
-
-    const imageUrl = await readAsDataURL(imageFile);
-
-    const userMessage: ChatMessage = {
-        id: uuidv4(),
-        sender: 'user',
-        type: 'image-upload',
-        imageUrls: [imageUrl],
-        content: `Solicitação de Alteração de Idade: De ${currentAge} para ${desiredAge} anos.`,
-        promptUsed: "__AGE_CHANGE__",
-        timestamp: new Date(),
-    };
-  
-    addMessage(userMessage);
-  
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a ajustar a idade na imagem...', timestamp: new Date() });
-    
-    try {
-        const imageBase64 = imageUrl.split(',')[1];
-        const resultBase64 = await changeAge(imageBase64, imageFile.type, currentAge, desiredAge, mode);
-        const resultImageUrl = `data:${imageFile.type};base64,${resultBase64}`;
-        
-        const promptUsed = `Alteração de idade: De ${currentAge} para ${desiredAge} anos.`;
-        const newHistoryEntry = createNewHistoryEntry(imageUrl, resultImageUrl, imageFile.type, promptUsed);
-        setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-
-        addMessage({
-            id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-            imageUrls: [resultImageUrl], imageMimeType: imageFile.type,
-            content: `Alteração de idade concluída! (Clique para editar)`, promptUsed: promptUsed, timestamp: new Date(),
-        });
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-        setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-
-
-  const handleSendMessage = useCallback(async (prompt: string) => {
-    const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt || status === AppStatus.LOADING) return;
-
-    setStatus(AppStatus.LOADING);
-    const historyBeforeSend = [...activeConversationMessages];
-    
-    const userMessage: ChatMessage = { 
-        id: uuidv4(), 
-        sender: 'user', 
-        type: 'text', 
-        content: trimmedPrompt, 
-        promptUsed: trimmedPrompt, 
-        timestamp: new Date() 
-    };
-
-    addMessage(userMessage);
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A processar...', timestamp: new Date() });
-
-    try {
-        const aiResponse = await generateContent(trimmedPrompt, historyBeforeSend);
-        if (aiResponse.type === 'image') {
-              const newHistoryEntry = createNewHistoryEntry('', aiResponse.data, aiResponse.mimeType || 'image/png', trimmedPrompt);
-              setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-              addMessage({
-                id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-                imageUrls: [newHistoryEntry.enhancedImageSrc], imageMimeType: newHistoryEntry.imageMimeType,
-                content: 'Imagem gerada a partir do seu prompt:', promptUsed: trimmedPrompt, timestamp: new Date(),
-            });
-        } else {
-             addMessage({ 
-                id: uuidv4(), 
-                sender: 'ai', 
-                type: 'audio', 
-                content: aiResponse.data, 
-                audioUrl: aiResponse.audioUrl,
-                timestamp: new Date() 
-            });
-        }
-        setStatus(AppStatus.SUCCESS);
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido ao gerar o conteúdo.";
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-        setStatus(AppStatus.ERROR);
-    } finally {
-        setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, status, activeConversationMessages, activeConversationId]);
-  
-   const handleSendImageWithPrompt = useCallback(async (imageFile: File, prompt: string) => {
-    if (!imageFile || status === AppStatus.LOADING) return;
-
+  const handleSendMessage = useCallback(async (prompt: string, images: { file: File, src: string }[] = []) => {
     setStatus(AppStatus.LOADING);
 
-    const readAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-      reader.readAsDataURL(file);
-    });
-    
-    const imageUrl = await readAsDataURL(imageFile);
-    
+    if (activeConversationId) {
+        // Se for a primeira mensagem de um utilizador, iniciar explicitamente o chat
+        const currentConvo = conversations.find(c => c.id === activeConversationId);
+        if (currentConvo && currentConvo.messages.length <= 1) {
+            setChatExplicitlyStarted(true);
+        }
+    }
+
     const userMessage: ChatMessage = {
       id: uuidv4(),
       sender: 'user',
-      type: 'image-upload',
-      imageUrls: [imageUrl],
+      type: images.length > 0 ? 'image-upload' : 'text',
       content: prompt,
-      promptUsed: prompt || "Aprimoramento automático",
+      imageUrls: images.map(img => img.src),
       timestamp: new Date(),
     };
-    addMessage(userMessage);
+    addMessageToConversation(userMessage);
 
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a trabalhar na sua imagem...', timestamp: new Date() });
-    
-    try {
-      const base64ImageData = imageUrl.split(',')[1];
-      const enhancedBase64 = await enhanceImage(base64ImageData, imageFile.type, prompt);
-      const enhancedImageUrl = `data:${imageFile.type};base64,${enhancedBase64}`;
-
-      const newHistoryEntry = createNewHistoryEntry(imageUrl, enhancedImageUrl, imageFile.type, prompt);
-      setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-      
-      const aiMessage: ChatMessage = {
+    // Adicionar indicador de carregamento
+    const loadingMessage: ChatMessage = {
         id: uuidv4(),
         sender: 'ai',
-        type: 'image-enhanced',
-        imageUrls: [enhancedImageUrl],
-        imageMimeType: imageFile.type,
-        content: `Aprimoramento concluído! (Clique para editar)`,
-        promptUsed: prompt,
-        historyId: newHistoryEntry.id,
+        type: 'loading-indicator',
+        content: "A IA está a pensar...",
         timestamp: new Date(),
-      };
-      addMessage(aiMessage);
-      setStatus(AppStatus.SUCCESS);
-
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-      addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-      setStatus(AppStatus.ERROR);
-    } finally {
-      setConversations((prev) => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, status, activeConversationId]);
-
-  const handlePerformObjectRemoval = useCallback(async (imageFile: File, maskBase64: string) => {
-    setIsMagicEraserModalOpen(false);
-    const imageUrl = await new Promise<string>(res => {
-      const reader = new FileReader();
-      reader.onload = () => res(reader.result as string);
-      reader.readAsDataURL(imageFile);
-    });
-    addMessage({ id: uuidv4(), sender: 'user', type: 'image-upload', imageUrls: [imageUrl], content: 'Remoção de objeto', timestamp: new Date() });
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a remover o objeto...', timestamp: new Date() });
-    try {
-      const imageBase64 = imageUrl.split(',')[1];
-      const resultBase64 = await removeObjectFromImage(imageBase64, imageFile.type, maskBase64);
-      const resultImageUrl = `data:${imageFile.type};base64,${resultBase64}`;
-      const newHistoryEntry = createNewHistoryEntry(imageUrl, resultImageUrl, imageFile.type, "Remoção Mágica de Objeto");
-      setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-      addMessage({
-        id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-        imageUrls: [resultImageUrl], content: 'Objeto removido com sucesso!', timestamp: new Date(),
-      });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-      addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-      setConversations(prev => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-
-  const handlePerformPhotoRestoration = useCallback(async (imageFile: File) => {
-    setIsRestorePhotoModalOpen(false);
-    const imageUrl = await new Promise<string>(res => {
-      const reader = new FileReader();
-      reader.onload = () => res(reader.result as string);
-      reader.readAsDataURL(imageFile);
-    });
-    addMessage({ id: uuidv4(), sender: 'user', type: 'image-upload', imageUrls: [imageUrl], content: 'Restaurar foto antiga', timestamp: new Date() });
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a restaurar a sua foto...', timestamp: new Date() });
-    try {
-      const imageBase64 = imageUrl.split(',')[1];
-      const resultBase64 = await restoreOldPhoto(imageBase64, imageFile.type);
-      const resultImageUrl = `data:${imageFile.type};base64,${resultBase64}`;
-      const newHistoryEntry = createNewHistoryEntry(imageUrl, resultImageUrl, imageFile.type, "Foto Antiga Restaurada");
-      setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-      addMessage({
-        id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-        imageUrls: [resultImageUrl], content: 'Foto restaurada com sucesso!', timestamp: new Date(),
-      });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-      addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-       setConversations(prev => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-  
-  const handlePerformStyleTransfer = useCallback(async (imageFile: File, stylePrompt: string) => {
-    setIsStyleTransferModalOpen(false);
-    const imageUrl = await new Promise<string>(res => {
-      const reader = new FileReader();
-      reader.onload = () => res(reader.result as string);
-      reader.readAsDataURL(imageFile);
-    });
-    addMessage({ id: uuidv4(), sender: 'user', type: 'image-upload', imageUrls: [imageUrl], content: `Aplicar estilo: "${stylePrompt}"`, timestamp: new Date() });
-    const loadingMessageId = uuidv4();
-    addMessage({ id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A IA está a aplicar o estilo...', timestamp: new Date() });
-    try {
-      const imageBase64 = imageUrl.split(',')[1];
-      const resultBase64 = await transferImageStyle(imageBase64, imageFile.type, stylePrompt);
-      const resultImageUrl = `data:${imageFile.type};base64,${resultBase64}`;
-      const newHistoryEntry = createNewHistoryEntry(imageUrl, resultImageUrl, imageFile.type, `Estilo: ${stylePrompt}`);
-      setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-      addMessage({
-        id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-        imageUrls: [resultImageUrl], content: 'Estilo aplicado com sucesso!', timestamp: new Date(),
-      });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-      addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}.`, timestamp: new Date() });
-    } finally {
-       setConversations(prev => prev.map(c => c.id === activeConversationId ? { ...c, messages: c.messages.filter(msg => msg.id !== loadingMessageId) } : c));
-    }
-  }, [addMessage, activeConversationId]);
-  
-  const handleNativeImageSelected = useCallback((file: File) => {
-    setIsNativeEditModalOpen(false);
-    
-    const reader = new FileReader();
-    reader.onloadend = () => {
-        const imageUrl = reader.result as string;
-        
-        const newHistoryEntry = createNewHistoryEntry(imageUrl, imageUrl, file.type, "Edição Local");
-        
-        setEnhancedImageHistory(prev => {
-          const newHistory = [...prev, newHistoryEntry];
-          const newIndex = newHistory.length - 1;
-          setCurrentHistoryIndex(newIndex);
-          setIsFinalizationViewOpen(true);
-          return newHistory;
-        });
     };
-    reader.readAsDataURL(file);
-  }, []);
-  
-  const handleOpenFinalizationView = useCallback((historyId: string) => {
-    const index = enhancedImageHistory.findIndex(entry => entry.id === historyId);
-    if (index !== -1) {
-      setCurrentHistoryIndex(index);
-      setIsFinalizationViewOpen(true);
-    }
-  }, [enhancedImageHistory]);
+    addMessageToConversation(loadingMessage);
 
-  const handleNavigateFinalization = useCallback((direction: 'prev' | 'next') => {
-    setCurrentHistoryIndex(prev => {
-      if (prev === null) return null;
-      const newIndex = direction === 'prev' ? prev - 1 : prev + 1;
-      if (newIndex >= 0 && newIndex < enhancedImageHistory.length) {
-        return newIndex;
-      }
-      return prev;
-    });
-  }, [enhancedImageHistory.length]);
-
-  const handleSaveAdjustments = useCallback((updatedEntry: EnhancedImageHistoryEntry) => {
-    setEnhancedImageHistory(prev => prev.map(entry => entry.id === updatedEntry.id ? updatedEntry : entry));
-  }, []);
-
-  const handleResetAdjustments = useCallback((historyId: string) => {
-    setEnhancedImageHistory(prev => prev.map(entry => {
-      if (entry.id === historyId) {
-        return {
-          ...entry,
-          enhancedImageSrc: entry.uncroppedEnhancedImageSrc || entry.enhancedImageSrc, // Revert to uncropped
-          appliedFilter: ImageFilter.NONE,
-          appliedBrightness: 100,
-          appliedContrast: 100,
-          appliedSocialMediaFilter: SocialMediaFilter.NONE,
-          appliedSocialMediaFilterIntensity: 100,
-          appliedAIFilter: AIFilter.NONE,
-        };
-      }
-      return entry;
-    }));
-  }, []);
-  
-  const handleApplyCrop = useCallback((historyId: string, croppedImageSrc: string) => {
-    setEnhancedImageHistory(prev => prev.map(entry => 
-      entry.id === historyId ? { ...entry, enhancedImageSrc: croppedImageSrc } : entry
-    ));
-  }, []);
-
-  const handleApplyAIFilter = useCallback(async (historyId: string, filter: AIFilter) => {
-    const entry = enhancedImageHistory.find(e => e.id === historyId);
-    if (!entry) return;
-
-    const baseImageSrc = entry.uncroppedEnhancedImageSrc || entry.enhancedImageSrc;
-    const [header, base64] = baseImageSrc.split(',');
-    const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-    
     try {
-        const resultBase64 = await applyAIFilter(base64, mimeType, filter);
-        const newImageUrl = `data:${mimeType};base64,${resultBase64}`;
-        
-        setEnhancedImageHistory(prev => prev.map(e => {
-            if (e.id === historyId) {
-                return {
-                    ...e,
-                    enhancedImageSrc: newImageUrl,
-                    uncroppedEnhancedImageSrc: newImageUrl, // New AI image becomes the base
-                    appliedAIFilter: filter,
-                    // Reset CSS adjustments as they were based on the old image
-                    appliedFilter: ImageFilter.NONE,
-                    appliedBrightness: 100,
-                    appliedContrast: 100,
-                    appliedSocialMediaFilter: SocialMediaFilter.NONE,
-                    appliedSocialMediaFilterIntensity: 100,
-                };
-            }
-            return e;
-        }));
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro ao aplicar filtro de IA: ${errorMessage}.`, timestamp: new Date() });
-    }
-  }, [enhancedImageHistory, addMessage]);
-
-
-  const handleDownloadSpecificImage = useCallback(async (entry: EnhancedImageHistoryEntry) => {
-    const imageToDownload = entry.enhancedImageSrc;
-    const filterToApply = [
-      `brightness(${entry.appliedBrightness}%)`,
-      `contrast(${entry.appliedContrast}%)`,
-      entry.appliedFilter !== ImageFilter.NONE ? `${entry.appliedFilter}(1)` : '',
-      getSocialMediaFilterStyle(entry.appliedSocialMediaFilter, entry.appliedSocialMediaFilterIntensity)
-    ].filter(Boolean).join(' ');
-
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = imageToDownload;
-    img.onload = async () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            ctx.filter = filterToApply;
-            ctx.drawImage(img, 0, 0);
+        if (images.length > 0) {
+            const base64 = images[0].src.split(',')[1];
+            const mimeType = images[0].file.type;
+            const enhancedBase64 = await enhanceImage(base64, mimeType, prompt);
             
-            // Apply watermark
-            ctx.filter = 'none'; // Reset filter before drawing watermark
-            await drawWatermarkOnCanvas(canvas);
+            const newHistoryEntry: EnhancedImageHistoryEntry = {
+                id: uuidv4(),
+                originalImageSrc: images[0].src,
+                enhancedImageSrc: `data:${mimeType};base64,${enhancedBase64}`,
+                uncroppedEnhancedImageSrc: `data:${mimeType};base64,${enhancedBase64}`,
+                imageMimeType: mimeType,
+                promptUsed: prompt,
+                timestamp: new Date(),
+                appliedFilter: ImageFilter.NONE,
+                appliedBrightness: 100,
+                appliedContrast: 100,
+                appliedSocialMediaFilter: SocialMediaFilter.NONE,
+                appliedSocialMediaFilterIntensity: 100,
+                appliedAIFilter: AIFilter.NONE,
+            };
+            setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
 
-            const link = document.createElement('a');
-            link.download = `aprimorada-${entry.id.substring(0, 6)}.png`;
-            link.href = canvas.toDataURL('image/png');
-            link.click();
+            const aiMessage: ChatMessage = {
+                id: uuidv4(),
+                sender: 'ai',
+                type: 'image-enhanced',
+                content: 'A sua imagem foi aprimorada com sucesso. Pode agora editá-la e guardá-la.',
+                imageUrls: [`data:${mimeType};base64,${enhancedBase64}`],
+                promptUsed: prompt,
+                historyId: newHistoryEntry.id,
+                timestamp: new Date(),
+            };
+            addMessageToConversation(aiMessage);
+            
+        } else {
+            const messageHistory = conversations.find(c => c.id === activeConversationId)?.messages || [];
+            const aiResponse = await generateContent(prompt, messageHistory);
+            
+            const aiMessage: ChatMessage = {
+                id: uuidv4(),
+                sender: 'ai',
+                type: aiResponse.type === 'audio' ? 'audio' : 'text',
+                content: aiResponse.data,
+                imageUrls: aiResponse.type === 'image' ? [aiResponse.data] : undefined,
+                imageMimeType: aiResponse.type === 'image' ? aiResponse.mimeType : undefined,
+                audioUrl: aiResponse.audioUrl,
+                suggestedToolId: aiResponse.suggestedToolId,
+                timestamp: new Date(),
+            };
+            addMessageToConversation(aiMessage);
         }
-    };
-  }, []);
+        setStatus(AppStatus.SUCCESS);
+    } catch (error) {
+        console.error("Erro ao comunicar com a API Gemini:", error);
+        const errorMessage = error instanceof Error ? error.message : "Ocorreu um erro desconhecido.";
+        const aiErrorMessage: ChatMessage = {
+            id: uuidv4(),
+            sender: 'ai',
+            type: 'system-info',
+            content: `Erro: ${errorMessage}`,
+            timestamp: new Date(),
+        };
+        addMessageToConversation(aiErrorMessage);
+        setStatus(AppStatus.ERROR);
+    }
+  }, [addMessageToConversation, activeConversationId, conversations]);
   
   const handleRegenerate = useCallback(async (messageId: string) => {
-    if (status === AppStatus.LOADING) return;
+    setStatus(AppStatus.LOADING);
+    let userMessage: ChatMessage | null = null;
+    let historyForRegen: ChatMessage[] = [];
 
-    const currentMessages = [...activeConversationMessages];
-    const messageIndex = currentMessages.findIndex(m => m.id === messageId);
-    if (messageIndex === -1) return;
+    setConversations(prev => 
+        prev.map(convo => {
+            if (convo.id !== activeConversationId) return convo;
+            
+            const messageIndex = convo.messages.findIndex(m => m.id === messageId);
+            if (messageIndex < 1) return convo;
+            
+            // Encontrar a mensagem do utilizador anterior
+            let userMessageIndex = -1;
+            for (let i = messageIndex - 1; i >= 0; i--) {
+                if (convo.messages[i].sender === 'user') {
+                    userMessage = convo.messages[i];
+                    userMessageIndex = i;
+                    break;
+                }
+            }
+            if (!userMessage) return convo;
 
-    let userPromptIndex = -1;
-    for (let i = messageIndex - 1; i >= 0; i--) {
-        if (currentMessages[i].sender === 'user') {
-            userPromptIndex = i;
-            break;
-        }
-    }
+            historyForRegen = convo.messages.slice(0, userMessageIndex);
+            
+            // Remover a mensagem da IA antiga e adicionar o indicador de carregamento
+            const newMessages = [...convo.messages.slice(0, messageIndex), {
+                id: uuidv4(), sender: 'ai', type: 'loading-indicator', content: 'A regenerar resposta...', timestamp: new Date()
+            } as ChatMessage];
+            
+            return { ...convo, messages: newMessages, lastModified: new Date() };
+        })
+    );
 
-    if (userPromptIndex === -1) {
-        addMessage({ id: uuidv4(), sender: 'ai', type: 'system-info', content: 'Não foi possível encontrar o prompt original para regenerar.', timestamp: new Date() });
+    if (!userMessage || !userMessage.content) {
+        setStatus(AppStatus.ERROR);
+        addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: 'Erro: Não foi possível encontrar o prompt original para regenerar.', timestamp: new Date() });
         return;
     }
 
-    const userPromptMessage = currentMessages[userPromptIndex];
-    const promptToRegenerate = userPromptMessage.content || userPromptMessage.promptUsed || '';
-    if (!promptToRegenerate) return;
-
-    const historyForApi = currentMessages.slice(0, userPromptIndex);
-    const messagesToKeep = currentMessages.slice(0, messageIndex);
-    const loadingMessageId = uuidv4();
-
-    // Fix: Explicitly type the loading message object to match ChatMessage interface
-    const loadingMessage: ChatMessage = { id: loadingMessageId, sender: 'ai', type: 'loading-indicator', content: 'A regenerar...', timestamp: new Date() };
-
-    setConversations(prev => prev.map(c => 
-        c.id === activeConversationId 
-            ? { ...c, messages: [...messagesToKeep, loadingMessage] }
-            : c
-    ));
-    setShouldScrollToBottom(true);
-    setStatus(AppStatus.LOADING);
-
     try {
-        const aiResponse = await generateContent(promptToRegenerate, historyForApi);
-        let newAiMessage: ChatMessage;
-
-        if (aiResponse.type === 'image') {
-          const newHistoryEntry = createNewHistoryEntry('', aiResponse.data, aiResponse.mimeType || 'image/png', promptToRegenerate);
-          setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
-          newAiMessage = {
-            id: uuidv4(), sender: 'ai', type: 'image-enhanced', historyId: newHistoryEntry.id,
-            imageUrls: [newHistoryEntry.enhancedImageSrc], imageMimeType: newHistoryEntry.imageMimeType,
-            content: 'Imagem regenerada:', promptUsed: promptToRegenerate, timestamp: new Date(),
-          };
-        } else {
-           newAiMessage = { 
-            id: uuidv4(), sender: 'ai', type: 'audio', content: aiResponse.data, 
-            audioUrl: aiResponse.audioUrl, timestamp: new Date() 
-           };
-        }
-        
-        setConversations(prev => prev.map(c => 
-            c.id === activeConversationId 
-                ? { ...c, messages: [...messagesToKeep, newAiMessage] } 
-                : c
-        ));
+        const aiResponse = await generateContent(userMessage.content!, historyForRegen);
+        const newAiMessage: ChatMessage = {
+            id: uuidv4(),
+            sender: 'ai',
+            type: aiResponse.type === 'audio' ? 'audio' : 'text',
+            content: aiResponse.data,
+            audioUrl: aiResponse.audioUrl,
+            suggestedToolId: aiResponse.suggestedToolId,
+            timestamp: new Date(),
+        };
+        addMessageToConversation(newAiMessage);
         setStatus(AppStatus.SUCCESS);
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : "Ocorreu um erro desconhecido.";
-        // Fix: Explicitly type the error message object to match ChatMessage interface
-        const errorMsg: ChatMessage = { id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro ao regenerar: ${errorMessage}.`, timestamp: new Date() };
-        setConversations(prev => prev.map(c => 
-            c.id === activeConversationId 
-                ? { ...c, messages: [...messagesToKeep, errorMsg] } 
-                : c
-        ));
+    } catch (error) {
+        console.error("Erro ao regenerar resposta:", error);
+        const errorMessage = error instanceof Error ? error.message : "Ocorreu um erro desconhecido.";
+        addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${errorMessage}`, timestamp: new Date() });
         setStatus(AppStatus.ERROR);
-    } finally {
-        setShouldScrollToBottom(true);
     }
-  }, [status, activeConversationMessages, activeConversationId, addMessage]);
-  
-  const handleViewImage = useCallback((src: string, entry?: EnhancedImageHistoryEntry, index?: number) => {
-      setViewingImage({ src, entry, index });
+  }, [activeConversationId, addMessageToConversation]);
+
+
+  const handleStartNewChat = useCallback((startEmpty: boolean = false) => {
+    const newId = uuidv4();
+    const newConversation: Conversation = {
+        id: newId,
+        title: "Nova Conversa",
+        messages: startEmpty ? [] : [createWelcomeMessage()],
+        lastModified: new Date(),
+    };
+    setConversations(prev => [...prev, newConversation]);
+    setActiveConversationId(newId);
+    setChatExplicitlyStarted(startEmpty); // Se começar vazia, considerar como iniciada
+    setCurrentView('chat');
   }, []);
 
-  const handleNavigateViewer = useCallback((direction: 'prev' | 'next') => {
-    setViewingImage(prev => {
-        if (!prev || typeof prev.index === 'undefined' || !prev.entry) return prev;
-        
-        const gallery = [...enhancedImageHistory].reverse();
-        const galleryIndex = gallery.findIndex(item => item.id === prev.entry?.id);
-
-        if (galleryIndex === -1) return prev;
-
-        const newGalleryIndex = direction === 'prev' ? galleryIndex + 1 : galleryIndex - 1;
-        
-        if (newGalleryIndex >= 0 && newGalleryIndex < gallery.length) {
-            const newEntry = gallery[newGalleryIndex];
-            const originalFullHistoryIndex = enhancedImageHistory.findIndex(item => item.id === newEntry.id);
-            return { src: newEntry.enhancedImageSrc, entry: newEntry, index: originalFullHistoryIndex };
-        }
-        return prev;
-    });
-  }, [enhancedImageHistory]);
-  
-  const handleEditFromViewer = useCallback(() => {
-    if (viewingImage && viewingImage.entry) {
-        handleOpenFinalizationView(viewingImage.entry.id);
-        setViewingImage(null);
+  const handleSelectConversation = (id: string) => {
+    setActiveConversationId(id);
+    const convo = conversations.find(c => c.id === id);
+    // Se a conversa tiver mais do que a mensagem de boas-vindas, considerar como "iniciada"
+    if (convo && (convo.messages.length > 1 || (convo.messages.length === 1 && convo.messages[0].type !== 'system-info'))) {
+        setChatExplicitlyStarted(true);
+    } else {
+        setChatExplicitlyStarted(false);
     }
-  }, [viewingImage, handleOpenFinalizationView]);
-
-  const handleOpenCreativeToolsModal = () => setIsCreativeToolsModalOpen(true);
+    setCurrentView('chat');
+  };
   
-  const handleSelectCreativeTool = (toolAction: () => void) => {
-    setIsCreativeToolsModalOpen(false);
-    toolAction();
+  const handleDeleteConversationRequest = (id: string, title: string) => {
+      setConfirmationAction({
+          title: "Apagar Conversa",
+          message: `Tem a certeza de que quer apagar permanentemente a conversa "${title}"? Esta ação não pode ser desfeita.`,
+          onConfirm: () => handleDeleteConversation(id)
+      });
   };
 
-  const handleViewImageFromChat = useCallback((historyId: string) => {
-    const index = enhancedImageHistory.findIndex(entry => entry.id === historyId);
-    if (index !== -1) {
-        const entry = enhancedImageHistory[index];
-        handleViewImage(entry.enhancedImageSrc, entry, index);
+  const handleDeleteConversation = (id: string) => {
+    setConversations(prev => prev.filter(convo => convo.id !== id));
+    // Se a conversa ativa for apagada, selecionar a mais recente ou criar uma nova
+    if (activeConversationId === id) {
+        const remainingConversations = conversations.filter(convo => convo.id !== id);
+        if (remainingConversations.length > 0) {
+            // Ordenar por data e selecionar a mais recente
+            const sorted = [...remainingConversations].sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+            setActiveConversationId(sorted[0].id);
+        } else {
+            handleStartNewChat();
+        }
     }
-  }, [enhancedImageHistory, handleViewImage]);
+  };
 
+  const handleClearAllDataRequest = () => {
+    setConfirmationAction({
+        title: "Limpar Todos os Dados",
+        message: "Tem a certeza de que quer apagar todas as suas conversas e a galeria de imagens? Esta ação é irreversível.",
+        onConfirm: async () => {
+            await clearAllData();
+            // Recarregar o estado da aplicação
+            setConversations([]);
+            setEnhancedImageHistory([]);
+            setChatExplicitlyStarted(false);
+            handleStartNewChat();
+        }
+    });
+  };
+  
+  const handleOpenImageModal = () => setIsImageModalOpen(true);
+  const handleSendWithImage = (file: File, prompt: string) => handleSendMessage(prompt, [{ file, src: URL.createObjectURL(file) }]);
+
+  const handleViewImageFromChat = (historyId: string) => {
+    const entryIndex = enhancedImageHistory.findIndex(e => e.id === historyId);
+    if (entryIndex !== -1) {
+      const entry = enhancedImageHistory[entryIndex];
+      setViewingImage({ src: entry.enhancedImageSrc, entry: entry, index: entryIndex });
+    }
+  };
+  
+  const handleOpenFinalizationViewFromViewer = () => {
+      if (viewingImage?.entry) {
+        const entryIndex = enhancedImageHistory.findIndex(e => e.id === viewingImage.entry!.id);
+        if (entryIndex !== -1) {
+          setCurrentHistoryIndex(entryIndex);
+          setIsFinalizationViewOpen(true);
+        }
+      }
+      setViewingImage(null);
+  }
+
+  const handleApplyCrop = useCallback((historyId: string, croppedImageSrc: string) => {
+      setEnhancedImageHistory(prev =>
+          prev.map(entry =>
+              entry.id === historyId ? { ...entry, enhancedImageSrc: croppedImageSrc } : entry
+          )
+      );
+  }, []);
+  
+  const handleResetAdjustments = useCallback((historyId: string) => {
+      setEnhancedImageHistory(prev =>
+          prev.map(entry => {
+              if (entry.id === historyId) {
+                  return {
+                      ...entry,
+                      enhancedImageSrc: entry.uncroppedEnhancedImageSrc || entry.enhancedImageSrc,
+                      appliedFilter: ImageFilter.NONE,
+                      appliedBrightness: 100,
+                      appliedContrast: 100,
+                      appliedSocialMediaFilter: SocialMediaFilter.NONE,
+                      appliedSocialMediaFilterIntensity: 100,
+                      appliedAIFilter: AIFilter.NONE,
+                  };
+              }
+              return entry;
+          })
+      );
+  }, []);
+  
+  const handleSaveImageEntryAdjustments = useCallback((updatedEntry: EnhancedImageHistoryEntry) => {
+    setEnhancedImageHistory(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e));
+    addMessageToConversation({
+        id: uuidv4(),
+        sender: 'ai',
+        type: 'system-info',
+        content: `Ajustes guardados para a imagem.`,
+        timestamp: new Date(),
+    });
+  }, [addMessageToConversation]);
+  
+  const downloadWithWatermark = useCallback(async (entry: EnhancedImageHistoryEntry) => {
+    setStatus(AppStatus.LOADING);
+    try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error("Não foi possível criar o contexto do canvas.");
+
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = entry.enhancedImageSrc;
+        await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+        });
+
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+
+        // Aplicar filtros CSS antes de desenhar
+        const filterStyle = [
+            `brightness(${entry.appliedBrightness}%)`,
+            `contrast(${entry.appliedContrast}%)`,
+            entry.appliedFilter !== ImageFilter.NONE ? `${entry.appliedFilter}(1)` : '',
+            getSocialMediaFilterStyle(entry.appliedSocialMediaFilter, entry.appliedSocialMediaFilterIntensity),
+        ].filter(Boolean).join(' ');
+        
+        ctx.filter = filterStyle;
+        ctx.drawImage(img, 0, 0);
+        
+        // Remover filtro para desenhar a marca d'água
+        ctx.filter = 'none';
+        await drawWatermarkOnCanvas(canvas);
+
+        const dataUrl = canvas.toDataURL(entry.imageMimeType || 'image/png');
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = `aprimorada_${entry.id.substring(0, 8)}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: 'Download da imagem com marca d\'água iniciado.', timestamp: new Date() });
+    } catch (error) {
+        console.error("Erro ao transferir a imagem:", error);
+        addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro ao transferir imagem: ${error instanceof Error ? error.message : 'Desconhecido'}.`, timestamp: new Date() });
+    } finally {
+        setStatus(AppStatus.IDLE);
+    }
+  }, [addMessageToConversation]);
+
+  const handleToolAction = async (
+    action: (...args: any[]) => Promise<any>,
+    options: {
+        loadingMessage: string;
+        successMessage: string;
+        errorMessageContext: string;
+        sourceFileForHistory?: File;
+    },
+    ...args: any[]
+  ) => {
+    setStatus(AppStatus.LOADING);
+    const { loadingMessage, successMessage, errorMessageContext, sourceFileForHistory } = options;
+    addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'loading-indicator', content: loadingMessage, timestamp: new Date() });
+
+    try {
+      const result = await action(...args);
+      const message: Partial<ChatMessage> = {
+          id: uuidv4(),
+          sender: 'ai',
+          content: successMessage,
+          timestamp: new Date(),
+      };
+
+      if (typeof result === 'string') {
+          if(result.startsWith('data:video')) {
+              message.type = 'video-generated';
+              message.videoUrl = result;
+          } else {
+             const originalSrcFile = sourceFileForHistory || (args.find(arg => arg instanceof File) as File | undefined);
+             const newHistoryEntry: EnhancedImageHistoryEntry = {
+                id: uuidv4(),
+                originalImageSrc: originalSrcFile ? URL.createObjectURL(originalSrcFile) : '', 
+                enhancedImageSrc: `data:image/png;base64,${result}`,
+                uncroppedEnhancedImageSrc: `data:image/png;base64,${result}`,
+                imageMimeType: 'image/png',
+                promptUsed: errorMessageContext,
+                timestamp: new Date(),
+                appliedFilter: ImageFilter.NONE, appliedBrightness: 100, appliedContrast: 100,
+                appliedSocialMediaFilter: SocialMediaFilter.NONE, appliedSocialMediaFilterIntensity: 100,
+                appliedAIFilter: AIFilter.NONE,
+             };
+             setEnhancedImageHistory(prev => [...prev, newHistoryEntry]);
+             message.type = 'image-enhanced';
+             message.imageUrls = [newHistoryEntry.enhancedImageSrc];
+             message.historyId = newHistoryEntry.id;
+          }
+      } else {
+          message.type = 'system-info';
+      }
+      addMessageToConversation(message as ChatMessage);
+      setStatus(AppStatus.SUCCESS);
+    } catch (error) {
+      console.error(`Erro na chamada da API Gemini para ${errorMessageContext}:`, error);
+      const userMessage = error instanceof Error ? error.message : "Ocorreu um erro desconhecido.";
+      if (errorMessageContext === 'animar a imagem com Veo' && userMessage.includes('Requested entity was not found')) {
+          addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `A sua chave de API pode não ser válida para o Veo. Verifique as suas informações de faturação em ai.google.dev/gemini-api/docs/billing e selecione uma chave válida.`, timestamp: new Date() });
+          window.aistudio?.openSelectKey();
+      } else {
+          addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${userMessage}`, timestamp: new Date() });
+      }
+      setStatus(AppStatus.ERROR);
+    }
+  };
+
+  const fileToB64 = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const handleClothingSwap = async (personFile: File, clothingFile: File) => {
+    const personB64 = await fileToB64(personFile);
+    const clothingB64 = await fileToB64(clothingFile);
+    handleToolAction(
+        swapClothing, 
+        {
+            loadingMessage: 'A realizar a troca de roupa...',
+            successMessage: 'Troca de roupa concluída com sucesso!',
+            errorMessageContext: 'trocar a roupa',
+            sourceFileForHistory: personFile
+        },
+        personB64, personFile.type, clothingB64, clothingFile.type
+    );
+  };
+  
+  const handleFaceSwap = async (targetFile: File, sourceFile: File) => {
+    const toDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+    const targetDataUrl = await toDataUrl(targetFile);
+    const sourceDataUrl = await toDataUrl(sourceFile);
+    handleToolAction(
+        swapFace, 
+        {
+            loadingMessage: 'A realizar a troca de rosto...',
+            successMessage: 'Troca de rosto concluída com sucesso!',
+            errorMessageContext: 'trocar o rosto',
+            sourceFileForHistory: targetFile
+        },
+        targetDataUrl, sourceDataUrl
+    );
+  };
+
+  const handleFaceTreatment = (file: File) => handleToolAction(
+    async (imgFile: File) => performFaceTreatment(await fileToB64(imgFile), imgFile.type),
+    {
+        loadingMessage: 'A aplicar tratamento ao rosto...',
+        successMessage: 'Tratamento de rosto concluído!',
+        errorMessageContext: 'realizar o tratamento de rosto'
+    },
+    file
+  );
+  
+  const handleAnimateImage = (file: File, prompt: string | null, aspectRatio: '16:9' | '9:16') => handleToolAction(
+    async (imgFile: File, p: string | null, ar: '16:9' | '9:16') => animateImageWithVeo(await fileToB64(imgFile), imgFile.type, p, ar), 
+    {
+        loadingMessage: 'A animar a sua imagem com o Veo... Isto pode demorar alguns minutos.',
+        successMessage: 'Vídeo gerado com sucesso!',
+        errorMessageContext: 'animar a imagem com Veo'
+    },
+    file, prompt, aspectRatio
+  );
+
+  const handleChangeBackground = (file: File, prompt: string) => handleToolAction(
+    async (imgFile: File, p: string) => changeImageBackground(await fileToB64(imgFile), imgFile.type, p), 
+    {
+        loadingMessage: 'A alterar o fundo...',
+        successMessage: 'Fundo alterado com sucesso!',
+        errorMessageContext: 'alterar o fundo da imagem'
+    },
+    file, prompt
+  );
+  
+  const handleRemoveObject = (file: File, maskB64: string) => handleToolAction(
+    async (imgFile: File, mB64: string) => removeObjectFromImage(await fileToB64(imgFile), imgFile.type, mB64), 
+    {
+        loadingMessage: 'A remover o objeto...',
+        successMessage: 'Objeto removido com sucesso!',
+        errorMessageContext: 'remover o objeto da imagem'
+    },
+    file, maskB64
+  );
+
+  const handleRestorePhoto = (file: File) => handleToolAction(
+    async (imgFile: File) => restoreOldPhoto(await fileToB64(imgFile), imgFile.type), 
+    {
+        loadingMessage: 'A restaurar a foto...',
+        successMessage: 'Foto restaurada com sucesso!',
+        errorMessageContext: 'restaurar a foto antiga'
+    },
+    file
+  );
+
+  const handleStyleTransfer = (file: File, prompt: string) => handleToolAction(
+    async (imgFile: File, p: string) => transferImageStyle(await fileToB64(imgFile), imgFile.type, p),
+    {
+        loadingMessage: 'A aplicar o estilo artístico...',
+        successMessage: 'Estilo aplicado com sucesso!',
+        errorMessageContext: 'aplicar o estilo artístico'
+    },
+    file, prompt
+  );
+  
+  const handleChangeAge = (file: File, currentAge: number, desiredAge: number, mode: 'rejuvenate' | 'age') => handleToolAction(
+    async (imgFile: File, cAge: number, dAge: number, m: 'rejuvenate'|'age') => changeAge(await fileToB64(imgFile), imgFile.type, cAge, dAge, m),
+    {
+        loadingMessage: 'A alterar a idade...',
+        successMessage: 'Idade alterada com sucesso!',
+        errorMessageContext: 'alterar a idade da pessoa'
+    },
+    file, currentAge, desiredAge, mode
+  );
+  
+  const handleApplyAIFilter = async (historyId: string, filter: AIFilter) => {
+    const entry = enhancedImageHistory.find(e => e.id === historyId);
+    if (!entry) return;
+    
+    setStatus(AppStatus.LOADING);
+    try {
+        const base64 = (entry.uncroppedEnhancedImageSrc || entry.enhancedImageSrc).split(',')[1];
+        const mimeType = entry.imageMimeType;
+        const newBase64 = await applyAIFilter(base64, mimeType, filter);
+        setEnhancedImageHistory(prev => prev.map(e => e.id === historyId ? { 
+            ...e, 
+            appliedAIFilter: filter,
+            uncroppedEnhancedImageSrc: `data:${mimeType};base64,${newBase64}`,
+            enhancedImageSrc: `data:${mimeType};base64,${newBase64}`,
+            // Reset local adjustments when applying an AI filter
+            appliedFilter: ImageFilter.NONE,
+            appliedBrightness: 100,
+            appliedContrast: 100,
+            appliedSocialMediaFilter: SocialMediaFilter.NONE,
+            appliedSocialMediaFilterIntensity: 100,
+        } : e));
+        setStatus(AppStatus.SUCCESS);
+    } catch (error) {
+        console.error("Erro ao aplicar filtro de IA:", error);
+        addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: `Erro: ${error instanceof Error ? error.message : 'Falha ao aplicar filtro.'}`, timestamp: new Date() });
+        setStatus(AppStatus.ERROR);
+    }
+  };
 
   return (
-    <div className="h-full w-full flex flex-col bg-appBg text-primaryText">
-      <AppHeader
-        appName={appName}
-        appDescription={appDescription}
-        isDarkMode={isDarkMode}
-        currentView={currentView}
-        onNavigateToChat={() => setCurrentView('chat')}
-        onNavigateToGallery={() => setCurrentView('gallery')}
-        onNavigateToConversations={() => setCurrentView('conversations')}
-        onNavigateToDocumentation={() => setCurrentView('documentation')}
-        onNewChat={handleNewChat}
-        onClearData={handleClearDataRequest}
-      />
-
-      <main ref={chatHistoryRef} className={`flex-1 w-full overflow-y-auto custom-scrollbar pt-24 ${showChatInput ? 'pb-28' : 'pb-4'}`}>
-        {currentView === 'chat' && (
-          <ChatScreen
-            messages={activeConversationMessages}
-            showIntroContent={showIntroContent}
-            onPromptSuggestionClick={handleSendMessage}
-            onStartChat={handleStartChat}
+    <div className={`flex flex-col h-screen w-screen bg-appBg font-sans`}>
+        <AppHeader
+            appName={appName}
+            appDescription={appDescription}
             isDarkMode={isDarkMode}
-            onViewEnhancedImage={handleViewImageFromChat}
-            onOpenClothingSwapModal={() => setIsClothingSwapSelectionModalOpen(true)}
-            onOpenFaceSwapModal={() => setIsFaceSwapModalOpen(true)}
-            onOpenFaceTreatmentModal={() => setIsFaceTreatmentModalOpen(true)}
-            onOpenAnimateImageModal={handleOpenAnimateImageModal}
-            onOpenChangeBackgroundModal={() => setIsChangeBackgroundModalOpen(true)}
-            onOpenNativeEditModal={() => setIsNativeEditModalOpen(true)}
-            onOpenMagicEraserModal={() => setIsMagicEraserModalOpen(true)}
-            onOpenRestorePhotoModal={() => setIsRestorePhotoModalOpen(true)}
-            onOpenStyleTransferModal={() => setIsStyleTransferModalOpen(true)}
-            onOpenAgeChangeModal={() => setIsAgeChangeModalOpen(true)}
-            onRegenerate={handleRegenerate}
-            onViewImage={(src) => handleViewImage(src)}
-            onOpenCreativeToolsModal={handleOpenCreativeToolsModal}
-          />
-        )}
-        {currentView === 'gallery' && <GalleryScreen gallery={enhancedImageHistory} onViewImage={(entry, index) => handleViewImage(entry.enhancedImageSrc, entry, index)} isDarkMode={isDarkMode} />}
-        {currentView === 'conversations' && (
+            currentView={currentView}
+            onNavigateToChat={() => setCurrentView('chat')}
+            onNavigateToGallery={() => setCurrentView('gallery')}
+            onNavigateToConversations={() => setCurrentView('conversations')}
+            onNavigateToDocumentation={() => setCurrentView('documentation')}
+            onNewChat={() => handleStartNewChat()}
+            onClearData={handleClearAllDataRequest}
+        />
+        <main ref={chatHistoryRef} className="flex-1 overflow-y-auto custom-scrollbar pt-24 pb-28">
+          {currentView === 'chat' && (
+             <ChatScreen 
+                messages={activeConversationMessages}
+                showIntroContent={showIntroContent}
+                onPromptSuggestionClick={(p) => handleSendMessage(p)}
+                onStartChat={() => setChatExplicitlyStarted(true)}
+                isDarkMode={isDarkMode}
+                onViewEnhancedImage={handleViewImageFromChat}
+                onRegenerate={handleRegenerate}
+                onViewImage={(src) => setViewingImage({ src })}
+                onOpenCreativeToolsModal={() => setIsCreativeToolsModalOpen(true)}
+                // Pass tool handlers
+                onOpenClothingSwapModal={() => setIsClothingSwapSelectionModalOpen(true)}
+                onOpenFaceSwapModal={() => setIsFaceSwapModalOpen(true)}
+                onOpenFaceTreatmentModal={() => setIsFaceTreatmentModalOpen(true)}
+                onOpenAnimateImageModal={() => setIsAnimateImageModalOpen(true)}
+                onOpenChangeBackgroundModal={() => setIsChangeBackgroundModalOpen(true)}
+                onOpenNativeEditModal={() => setIsNativeEditModalOpen(true)}
+                onOpenMagicEraserModal={() => setIsMagicEraserModalOpen(true)}
+                onOpenRestorePhotoModal={() => setIsRestorePhotoModalOpen(true)}
+                onOpenStyleTransferModal={() => setIsStyleTransferModalOpen(true)}
+                onOpenAgeChangeModal={() => setIsAgeChangeModalOpen(true)}
+             />
+          )}
+          {currentView === 'gallery' && (
+             <GalleryScreen 
+                gallery={enhancedImageHistory}
+                isDarkMode={isDarkMode}
+                onViewImage={(entry, index) => setViewingImage({ src: entry.enhancedImageSrc, entry, index })}
+             />
+          )}
+          {currentView === 'conversations' && (
             <ConversationsScreen 
-                conversations={conversations} 
+                conversations={conversations}
                 onSelectConversation={handleSelectConversation}
                 onDeleteConversationRequest={handleDeleteConversationRequest}
-                onNewChat={handleNewChat}
+                onNewChat={() => handleStartNewChat(true)}
                 isDarkMode={isDarkMode}
             />
-        )}
-        {currentView === 'documentation' && <DocumentationScreen isDarkMode={isDarkMode} />}
-      </main>
+          )}
+          {currentView === 'documentation' && <DocumentationScreen isDarkMode={isDarkMode} />}
+        </main>
 
-      {showChatInput && (
-        <footer className="fixed bottom-0 left-0 right-0 w-full bg-gradient-to-t from-appBg to-transparent">
-          <ChatInputBar
-            onOpenImageModal={() => setIsImageModalOpen(true)}
-            onSendMessage={handleSendMessage}
-            isLoading={status === AppStatus.LOADING}
-            isDarkMode={isDarkMode}
-          />
-        </footer>
-      )}
+       {showChatInput && (
+          <footer className="fixed bottom-0 left-0 right-0 bg-appBg/80 backdrop-blur-sm border-t border-borderColor">
+            <ChatInputBar onSendMessage={handleSendMessage} onOpenImageModal={handleOpenImageModal} isLoading={status === AppStatus.LOADING} isDarkMode={isDarkMode} />
+          </footer>
+       )}
 
-      {isImageModalOpen && (
-        <ImageSelectionModal
-          isOpen={isImageModalOpen}
-          onClose={() => setIsImageModalOpen(false)}
-          onSend={handleSendImageWithPrompt}
-          isDarkMode={isDarkMode}
-        />
-      )}
-
-       {isClothingSwapSelectionModalOpen && (
-        <ClothingSwapSelectionModal
-          isOpen={isClothingSwapSelectionModalOpen}
-          onClose={() => setIsClothingSwapSelectionModalOpen(false)}
-          onPerformSwap={handlePerformClothingSwap}
-          isDarkMode={isDarkMode}
-        />
-      )}
-      
-       {isFaceSwapModalOpen && (
-        <FaceSwapSelectionModal
-          isOpen={isFaceSwapModalOpen}
-          onClose={() => setIsFaceSwapModalOpen(false)}
-          onPerformSwap={handlePerformFaceSwap}
-          isDarkMode={isDarkMode}
-        />
-      )}
-
-       {isFaceTreatmentModalOpen && (
-        <FaceTreatmentSelectionModal
-          isOpen={isFaceTreatmentModalOpen}
-          onClose={() => setIsFaceTreatmentModalOpen(false)}
-          onPerformTreatment={handlePerformFaceTreatment}
-          isDarkMode={isDarkMode}
-        />
-      )}
-      
-       {isAnimateImageModalOpen && (
-        <AnimateImageModal
-          isOpen={isAnimateImageModalOpen}
-          onClose={() => setIsAnimateImageModalOpen(false)}
-          onAnimate={handleAnimateImage}
-          isDarkMode={isDarkMode}
-        />
-      )}
-      
-       {isChangeBackgroundModalOpen && (
-        <ChangeBackgroundModal
-          isOpen={isChangeBackgroundModalOpen}
-          onClose={() => setIsChangeBackgroundModalOpen(false)}
-          onConfirm={handlePerformBackgroundChange}
-          isDarkMode={isDarkMode}
-        />
-      )}
-
-      {isNativeEditModalOpen && (
-        <NativeEditSelectionModal
-            isOpen={isNativeEditModalOpen}
-            onClose={() => setIsNativeEditModalOpen(false)}
-            onImageConfirmed={handleNativeImageSelected}
-            isDarkMode={isDarkMode}
-        />
-      )}
-      
-      {isMagicEraserModalOpen && (
-        <MagicEraserModal
-          isOpen={isMagicEraserModalOpen}
-          onClose={() => setIsMagicEraserModalOpen(false)}
-          onPerformRemoval={handlePerformObjectRemoval}
-          isDarkMode={isDarkMode}
-        />
-      )}
-
-      {isRestorePhotoModalOpen && (
-        <RestorePhotoModal
-          isOpen={isRestorePhotoModalOpen}
-          onClose={() => setIsRestorePhotoModalOpen(false)}
-          onPerformRestore={handlePerformPhotoRestoration}
-          isDarkMode={isDarkMode}
-        />
-      )}
-
-      {isStyleTransferModalOpen && (
-        <StyleTransferModal
-          isOpen={isStyleTransferModalOpen}
-          onClose={() => setIsStyleTransferModalOpen(false)}
-          onConfirm={handlePerformStyleTransfer}
-          isDarkMode={isDarkMode}
-        />
-      )}
-
-      {isAgeChangeModalOpen && (
-        <AgeChangeModal
-          isOpen={isAgeChangeModalOpen}
-          onClose={() => setIsAgeChangeModalOpen(false)}
-          onConfirm={handlePerformAgeChange}
-          isDarkMode={isDarkMode}
-        />
-      )}
-
+      {/* --- Modals and Views --- */}
+      {isImageModalOpen && <ImageSelectionModal isOpen={isImageModalOpen} onClose={() => setIsImageModalOpen(false)} onSend={handleSendWithImage} isDarkMode={isDarkMode} />}
       {isFinalizationViewOpen && currentHistoryIndex !== null && (
         <ImageFinalizationView
           isOpen={isFinalizationViewOpen}
@@ -1252,62 +794,47 @@ const App: React.FC = () => {
           imageEntry={enhancedImageHistory[currentHistoryIndex]}
           currentIndex={currentHistoryIndex}
           historyLength={enhancedImageHistory.length}
-          onNavigate={handleNavigateFinalization}
-          onDownloadSpecificImage={handleDownloadSpecificImage}
-          onSaveImageEntryAdjustments={handleSaveAdjustments}
+          onNavigate={(dir) => setCurrentHistoryIndex(prev => prev !== null ? (dir === 'prev' ? Math.max(0, prev - 1) : Math.min(enhancedImageHistory.length - 1, prev + 1)) : null)}
+          onDownloadSpecificImage={downloadWithWatermark}
+          onSaveImageEntryAdjustments={handleSaveImageEntryAdjustments}
           onApplyCrop={handleApplyCrop}
           onResetAdjustments={handleResetAdjustments}
           onApplyAIFilter={handleApplyAIFilter}
-          addMessage={addMessage}
+          addMessage={addMessageToConversation}
           isDarkMode={isDarkMode}
         />
       )}
-      
-      {viewingImage && (
-          <SimpleImageViewer
-              isOpen={!!viewingImage}
-              onClose={() => setViewingImage(null)}
-              imageSrc={viewingImage.src}
-              isDarkMode={isDarkMode}
-              onEdit={viewingImage.entry ? handleEditFromViewer : undefined}
-              onNavigate={viewingImage.entry ? handleNavigateViewer : undefined}
-              currentIndex={viewingImage.index}
-              galleryLength={enhancedImageHistory.length}
-          />
-      )}
-
-      {confirmationAction && (
-        <ConfirmationModal
-            isOpen={!!confirmationAction}
-            onClose={() => setConfirmationAction(null)}
-            onConfirm={() => {
-                confirmationAction.onConfirm();
-                setConfirmationAction(null);
-            }}
-            title={confirmationAction.title}
-            message={confirmationAction.message}
-            isDarkMode={isDarkMode}
-        />
-      )}
-
-      {isCreativeToolsModalOpen && (
-        <CreativeToolsModal
-          isOpen={isCreativeToolsModalOpen}
-          onClose={() => setIsCreativeToolsModalOpen(false)}
-          onOpenNativeEditModal={() => handleSelectCreativeTool(() => setIsNativeEditModalOpen(true))}
-          onOpenAnimateImageModal={() => handleSelectCreativeTool(handleOpenAnimateImageModal)}
-          onOpenClothingSwapModal={() => handleSelectCreativeTool(() => setIsClothingSwapSelectionModalOpen(true))}
-          onOpenFaceSwapModal={() => handleSelectCreativeTool(() => setIsFaceSwapModalOpen(true))}
-
-          onOpenFaceTreatmentModal={() => handleSelectCreativeTool(() => setIsFaceTreatmentModalOpen(true))}
-          onOpenAgeChangeModal={() => handleSelectCreativeTool(() => setIsAgeChangeModalOpen(true))}
-          onOpenChangeBackgroundModal={() => handleSelectCreativeTool(() => setIsChangeBackgroundModalOpen(true))}
-          onOpenMagicEraserModal={() => handleSelectCreativeTool(() => setIsMagicEraserModalOpen(true))}
-          onOpenRestorePhotoModal={() => handleSelectCreativeTool(() => setIsRestorePhotoModalOpen(true))}
-          onOpenStyleTransferModal={() => handleSelectCreativeTool(() => setIsStyleTransferModalOpen(true))}
+       {viewingImage && (
+        <SimpleImageViewer
+          isOpen={!!viewingImage}
+          onClose={() => setViewingImage(null)}
+          imageSrc={viewingImage.src}
           isDarkMode={isDarkMode}
+          onEdit={viewingImage.entry ? handleOpenFinalizationViewFromViewer : undefined}
+          onNavigate={viewingImage.entry ? (dir) => {
+              const newIndex = viewingImage.index! + (dir === 'prev' ? -1 : 1);
+              if (newIndex >= 0 && newIndex < enhancedImageHistory.length) {
+                  const newEntry = enhancedImageHistory[newIndex];
+                  setViewingImage({ src: newEntry.enhancedImageSrc, entry: newEntry, index: newIndex });
+              }
+          } : undefined}
+          currentIndex={viewingImage.index}
+          galleryLength={enhancedImageHistory.length}
         />
       )}
+      {isClothingSwapSelectionModalOpen && <ClothingSwapSelectionModal isOpen={isClothingSwapSelectionModalOpen} onClose={() => setIsClothingSwapSelectionModalOpen(false)} onPerformSwap={handleClothingSwap} isDarkMode={isDarkMode} />}
+      {isFaceSwapModalOpen && <FaceSwapSelectionModal isOpen={isFaceSwapModalOpen} onClose={() => setIsFaceSwapModalOpen(false)} onPerformSwap={handleFaceSwap} isDarkMode={isDarkMode} />}
+      {isFaceTreatmentModalOpen && <FaceTreatmentSelectionModal isOpen={isFaceTreatmentModalOpen} onClose={() => setIsFaceTreatmentModalOpen(false)} onPerformTreatment={handleFaceTreatment} isDarkMode={isDarkMode} />}
+      {isAnimateImageModalOpen && <AnimateImageModal isOpen={isAnimateImageModalOpen} onClose={() => setIsAnimateImageModalOpen(false)} onAnimate={handleAnimateImage} isDarkMode={isDarkMode} />}
+      {isChangeBackgroundModalOpen && <ChangeBackgroundModal isOpen={isChangeBackgroundModalOpen} onClose={() => setIsChangeBackgroundModalOpen(false)} onConfirm={handleChangeBackground} isDarkMode={isDarkMode} />}
+      {isNativeEditModalOpen && <NativeEditSelectionModal isOpen={isNativeEditModalOpen} onClose={() => setIsNativeEditModalOpen(false)} onImageConfirmed={(file) => console.log("Not implemented yet")} isDarkMode={isDarkMode} />}
+      {confirmationAction && <ConfirmationModal isOpen={!!confirmationAction} onClose={() => setConfirmationAction(null)} onConfirm={confirmationAction.onConfirm} title={confirmationAction.title} message={confirmationAction.message} isDarkMode={isDarkMode} />}
+      {isCreativeToolsModalOpen && <CreativeToolsModal isOpen={isCreativeToolsModalOpen} onClose={() => setIsCreativeToolsModalOpen(false)} onOpenAnimateImageModal={() => { setIsCreativeToolsModalOpen(false); setIsAnimateImageModalOpen(true); }} onOpenChangeBackgroundModal={() => { setIsCreativeToolsModalOpen(false); setIsChangeBackgroundModalOpen(true); }} onOpenClothingSwapModal={() => { setIsCreativeToolsModalOpen(false); setIsClothingSwapSelectionModalOpen(true); }} onOpenFaceSwapModal={() => { setIsCreativeToolsModalOpen(false); setIsFaceSwapModalOpen(true); }} onOpenFaceTreatmentModal={() => { setIsCreativeToolsModalOpen(false); setIsFaceTreatmentModalOpen(true); }} onOpenNativeEditModal={() => { setIsCreativeToolsModalOpen(false); setIsNativeEditModalOpen(true); }} onOpenMagicEraserModal={() => { setIsCreativeToolsModalOpen(false); setIsMagicEraserModalOpen(true); }} onOpenRestorePhotoModal={() => { setIsCreativeToolsModalOpen(false); setIsRestorePhotoModalOpen(true); }} onOpenStyleTransferModal={() => { setIsCreativeToolsModalOpen(false); setIsStyleTransferModalOpen(true); }} onOpenAgeChangeModal={() => { setIsCreativeToolsModalOpen(false); setIsAgeChangeModalOpen(true); }} isDarkMode={isDarkMode} />}
+      {isMagicEraserModalOpen && <MagicEraserModal isOpen={isMagicEraserModalOpen} onClose={() => setIsMagicEraserModalOpen(false)} onPerformRemoval={handleRemoveObject} isDarkMode={isDarkMode} />}
+      {isRestorePhotoModalOpen && <RestorePhotoModal isOpen={isRestorePhotoModalOpen} onClose={() => setIsRestorePhotoModalOpen(false)} onPerformRestore={handleRestorePhoto} isDarkMode={isDarkMode} />}
+      {isStyleTransferModalOpen && <StyleTransferModal isOpen={isStyleTransferModalOpen} onClose={() => setIsStyleTransferModalOpen(false)} onConfirm={handleStyleTransfer} isDarkMode={isDarkMode} />}
+      {isAgeChangeModalOpen && <AgeChangeModal isOpen={isAgeChangeModalOpen} onClose={() => setIsAgeChangeModalOpen(false)} onConfirm={handleChangeAge} isDarkMode={isDarkMode} />}
+
     </div>
   );
 };
