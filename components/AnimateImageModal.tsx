@@ -127,6 +127,7 @@ const AnimateImageModal: React.FC<AnimateImageModalProps> = ({ isOpen, onClose, 
   const handlePerformAnimation = () => {
     if (image) {
       onAnimate(image.file, prompt.trim() === '' ? null : prompt.trim(), aspectRatio);
+      handleClose();
     }
   };
 

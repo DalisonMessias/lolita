@@ -127,6 +127,7 @@ const ChangeBackgroundModal: React.FC<ChangeBackgroundModalProps> = ({ isOpen, o
   const handleConfirmAction = () => {
     if (image && prompt.trim()) {
       onConfirm(image.file, prompt.trim());
+      handleClose();
     }
   };
 

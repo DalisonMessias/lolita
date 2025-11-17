@@ -140,6 +140,7 @@ export interface ChatMessage {
   promptUsed?: string; // For 'image-enhanced' messages, store the prompt for Discord webhook
   historyId?: string; // New: Links an 'image-enhanced' message to its history entry
   timestamp: Date;
+  suggestedToolId?: string;
 }
 
 // New: Interface to store enhanced image details in history, including adjustments

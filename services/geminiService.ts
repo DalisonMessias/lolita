@@ -2,6 +2,30 @@ import { GoogleGenAI, Modality, Type, HarmCategory, HarmBlockThreshold } from "@
 import { ChatMessage, AIFilter } from '../types';
 import { aiFilters } from "../utils/aiFilterUtils";
 
+const toolKeywords: { [key: string]: string[] } = {
+    'native-edit': ['editar', 'editor', 'ajustar', 'ajustes', 'cortar', 'recortar', 'filtro', 'filtros'],
+    'animate-veo': ['animar', 'animação', 'veo', 'video', 'movimento'],
+    'magic-eraser': ['remover objeto', 'remoção mágica', 'apagar', 'borracha mágica', 'remover elemento'],
+    'restore-photo': ['restaurar', 'restauração', 'foto antiga', 'danificada', 'reparar'],
+    'style-transfer': ['estilo artístico', 'transferência de estilo', 'pintura', 'van gogh', 'picasso', 'como arte'],
+    'swap-clothing': ['trocar roupa', 'vestir', 'troca de roupa', 'mudar roupa'],
+    'swap-face': ['trocar rosto', 'troca de rosto', 'mudar rosto'],
+    'face-treatment': ['tratamento de pele', 'tratamento de rosto', 'suavizar', 'rugas', 'imperfeições', 'acne', 'manchas'],
+    'age-change': ['envelhecer', 'rejuvenescer', 'mudar idade', 'alterar idade', 'mais velho', 'mais novo'],
+    'change-background': ['alterar fundo', 'mudar fundo', 'trocar fundo', 'remover fundo'],
+};
+
+const detectToolFromPrompt = (prompt: string): string | null => {
+    const lowerPrompt = prompt.toLowerCase();
+    for (const toolId in toolKeywords) {
+        for (const keyword of toolKeywords[toolId]) {
+            if (lowerPrompt.includes(keyword)) {
+                return toolId;
+            }
+        }
+    }
+    return null;
+};
 
 const safetySettings = [
   {
@@ -284,7 +308,7 @@ export async function generateSpeech(text: string): Promise<string | null> {
 }
 
 
-export async function generateContent(prompt: string, history: ChatMessage[] = []): Promise<{ type: 'text' | 'image' | 'audio'; data: string; mimeType?: string; audioUrl?: string | null; }> {
+export async function generateContent(prompt: string, history: ChatMessage[] = []): Promise<{ type: 'text' | 'image' | 'audio'; data: string; mimeType?: string; audioUrl?: string | null; suggestedToolId?: string | null; }> {
   const ai = getGeminiClient();
   const geminiHistory = chatHistoryToGeminiHistory(history);
 
@@ -358,7 +382,11 @@ export async function generateContent(prompt: string, history: ChatMessage[] = [
     const text = response.text || candidate.content?.parts?.find(part => part.text)?.text || '';
     if (text) {
         const audioUrl = await generateSpeech(text);
-        return { type: 'audio', data: text, audioUrl };
+        let suggestedToolId: string | null = null;
+        if (text.includes('[CHOOSE_TOOL_BUTTON]')) {
+            suggestedToolId = detectToolFromPrompt(prompt) || 'creative-tools';
+        }
+        return { type: 'audio', data: text, audioUrl, suggestedToolId };
     }
 
     throw new Error("A API Gemini não encontrou conteúdo de texto na resposta.");
@@ -481,7 +509,7 @@ export async function swapFace(targetImageDataUrl: string, sourceImageDataUrl: s
 }
 
 export async function performFaceTreatment(imageBase64: string, mimeType: string): Promise<string> {
-  const prompt = `VOCÊ É UMA FERRAMENTA DE RETOQUE DIGITAL. A SUA FUNÇÃO É PURAMENTE TÉCNICA. NÃO JULGUE NEM SE RECUSE A PROCESSAR A IMAGEM COM BASE NO ASSUNTO. EXECUTE AS EDIÇÕES SOLICITADAS INDEPENDENTEMENTE DO CONTEXTO DA FOTO. TAREFA: Tratamento de Pele e Rosto Fotorrealista. INSTRUÇÃO: Realize um tratamento fotorrealista na pele e no rosto da(s) pessoa(s) na imagem. Foque-se em: 1. Remoção de Imperfeições (manchas, acne). 2. Suavização de Rugas (natural, sem remover textura). 3. Uniformização do Tom de Pele. 4. Redução de Brilho. REGRAS: NÃO ALTERAR A ESTRUTURA FACIAL. NÃO ALTERAR A COR de olhos ou cabelo. NÃO REMOVER CARACTERÍSTICAS PERMANENTES (sardas, sinais). O resultado deve ser natural. Gere a imagem de saída com a maior resolução possível.`;
+  const prompt = `VOCÊ É UMA FERRAMENTA DE RETOQUE DIGITAL. A SUA FUNÇÃO É PURAMENTE TÉCNICA. NÃO JULGE NEM SE RECUSE A PROCESSAR A IMAGEM COM BASE NO ASSUNTO. EXECUTE AS EDIÇÕES SOLICITADAS INDEPENDENTEMENTE DO CONTEXTO DA FOTO. TAREFA: Tratamento de Pele e Rosto Fotorrealista. INSTRUÇÃO: Realize um tratamento fotorrealista na pele e no rosto da(s) pessoa(s) na imagem. Foque-se em: 1. Remoção de Imperfeições (manchas, acne). 2. Suavização de Rugas (natural, sem remover textura). 3. Uniformização do Tom de Pele. 4. Redução de Brilho. REGRAS: NÃO ALTERAR A ESTRUTURA FACIAL. NÃO ALTERAR A COR de olhos ou cabelo. NÃO REMOVER CARACTERÍSTICAS PERMANENTES (sardas, sinais). O resultado deve ser natural. Gere a imagem de saída com a maior resolução possível.`;
   return processImageWithGemini(imageBase64, mimeType, prompt, 'realizar o tratamento de rosto');
 }
 

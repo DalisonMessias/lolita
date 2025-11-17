@@ -139,6 +139,7 @@ const ClothingSwapSelectionModal: React.FC<ClothingSwapSelectionModalProps> = ({
   const handlePerformSwap = () => {
     if (personImage && clothingImage) {
       onPerformSwap(personImage.file, clothingImage.file);
+      handleClose();
     }
   };
   

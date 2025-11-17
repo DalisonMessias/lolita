@@ -154,7 +154,38 @@ const MagicEraserModal: React.FC<MagicEraserModalProps> = ({ isOpen, onClose, on
   const draw = (e: React.MouseEvent | React.TouchEvent) => { /* ... ( unchanged ) ... */ };
   const stopDrawing = () => setIsDrawing(false);
 
-  const handleConfirm = useCallback(() => { /* ... ( unchanged ) ... */ }, [image, onPerformRemoval]);
+  const handleConfirm = useCallback(() => {
+    if (!image || !drawingCanvasRef.current) return;
+
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = drawingCanvasRef.current.width;
+    maskCanvas.height = drawingCanvasRef.current.height;
+    const maskCtx = maskCanvas.getContext('2d');
+    if (!maskCtx) return;
+
+    maskCtx.drawImage(drawingCanvasRef.current, 0, 0);
+
+    const imageData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] > 0) {
+        data[i] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+      } else {
+        data[i] = 0;
+        data[i + 1] = 0;
+        data[i + 2] = 0;
+      }
+      data[i + 3] = 255;
+    }
+    maskCtx.putImageData(imageData, 0, 0);
+
+    const maskBase64 = maskCanvas.toDataURL('image/png').split(',')[1];
+
+    onPerformRemoval(image.file, maskBase64);
+    handleClose();
+  }, [image, onPerformRemoval, handleClose]);
 
   if (!isOpen) return null;
 

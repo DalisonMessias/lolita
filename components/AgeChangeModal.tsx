@@ -144,6 +144,7 @@ const AgeChangeModal: React.FC<AgeChangeModalProps> = ({ isOpen, onClose, onConf
   const handleConfirmAction = () => {
     if (image && currentAge && desiredAge) {
       onConfirm(image.file, parseInt(currentAge, 10), parseInt(desiredAge, 10), mode);
+      handleClose();
     }
   };
 

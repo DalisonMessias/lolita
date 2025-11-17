@@ -139,6 +139,7 @@ const FaceSwapSelectionModal: React.FC<FaceSwapSelectionModalProps> = ({ isOpen,
   const handlePerformSwap = () => {
     if (targetImage && sourceImage) {
       onPerformSwap(targetImage.file, sourceImage.file);
+      handleClose();
     }
   };
 

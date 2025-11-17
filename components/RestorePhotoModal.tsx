@@ -124,6 +124,7 @@ const RestorePhotoModal: React.FC<RestorePhotoModalProps> = ({ isOpen, onClose, 
   const handlePerformAction = () => {
     if (image) {
       onPerformRestore(image.file);
+      handleClose();
     }
   };
 

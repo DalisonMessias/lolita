@@ -10,7 +10,17 @@ interface ChatMessageDisplayProps {
   onViewEnhancedImage?: (historyId: string) => void;
   onRegenerate?: (messageId: string) => void;
   onViewImage?: (src: string) => void;
-  onOpenCreativeToolsModal?: () => void;
+  onOpenCreativeToolsModal: () => void;
+  onOpenClothingSwapModal: () => void;
+  onOpenFaceSwapModal: () => void;
+  onOpenFaceTreatmentModal: () => void;
+  onOpenAnimateImageModal: () => void;
+  onOpenChangeBackgroundModal: () => void;
+  onOpenNativeEditModal: () => void;
+  onOpenMagicEraserModal: () => void;
+  onOpenRestorePhotoModal: () => void;
+  onOpenStyleTransferModal: () => void;
+  onOpenAgeChangeModal: () => void;
 }
 
 const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({ 
@@ -19,7 +29,17 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   onViewEnhancedImage, 
   onRegenerate,
   onViewImage,
-  onOpenCreativeToolsModal
+  onOpenCreativeToolsModal,
+  onOpenClothingSwapModal,
+  onOpenFaceSwapModal,
+  onOpenFaceTreatmentModal,
+  onOpenAnimateImageModal,
+  onOpenChangeBackgroundModal,
+  onOpenNativeEditModal,
+  onOpenMagicEraserModal,
+  onOpenRestorePhotoModal,
+  onOpenStyleTransferModal,
+  onOpenAgeChangeModal,
 }) => {
   const isUser = message.sender === 'user';
   const bubbleClasses = isUser ? 'bg-userBubble ml-auto' : 'bg-aiBubble mr-auto';
@@ -28,9 +48,44 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   const isEnhancedAndClickable = message.type === 'image-enhanced' && message.historyId && onViewEnhancedImage;
   const isUploadAndClickable = message.type === 'image-upload' && message.imageUrls && onViewImage;
   const canRegenerate = message.sender === 'ai' && (message.type === 'text' || message.type === 'image-enhanced' || message.type === 'audio') && onRegenerate;
+  
+  const toolHandlers: { [key: string]: () => void } = {
+    'native-edit': onOpenNativeEditModal,
+    'animate-veo': onOpenAnimateImageModal,
+    'magic-eraser': onOpenMagicEraserModal,
+    'restore-photo': onOpenRestorePhotoModal,
+    'style-transfer': onOpenStyleTransferModal,
+    'swap-clothing': onOpenClothingSwapModal,
+    'swap-face': onOpenFaceSwapModal,
+    'face-treatment': onOpenFaceTreatmentModal,
+    'age-change': onOpenAgeChangeModal,
+    'change-background': onOpenChangeBackgroundModal,
+  };
+  
+  const toolNames: { [key: string]: string } = {
+    'native-edit': 'Editor de Fotos',
+    'animate-veo': 'Animar com Veo',
+    'magic-eraser': 'Remoção Mágica',
+    'restore-photo': 'Restaurar Foto',
+    'style-transfer': 'Estilo Artístico',
+    'swap-clothing': 'Trocar Roupa',
+    'swap-face': 'Trocar Rosto',
+    'face-treatment': 'Tratamento de Pele',
+    'age-change': 'Mudar Idade',
+    'change-background': 'Alterar Fundo',
+  };
 
   const buttonTag = '[CHOOSE_TOOL_BUTTON]';
-  const hasToolButton = message.sender === 'ai' && message.content?.includes(buttonTag) && onOpenCreativeToolsModal;
+  const hasToolButton = message.sender === 'ai' && message.content?.includes(buttonTag);
+  
+  const handleToolButtonClick = () => {
+    const handler = message.suggestedToolId ? toolHandlers[message.suggestedToolId] : null;
+    if (handler) {
+      handler();
+    } else {
+      onOpenCreativeToolsModal(); // Fallback to general modal
+    }
+  };
 
   return (
     <div className={`flex items-end gap-2 ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
@@ -71,10 +126,10 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
                     )}
                     {hasToolButton && (
                       <button
-                        onClick={onOpenCreativeToolsModal}
+                        onClick={handleToolButtonClick}
                         className="mt-3 w-full text-center p-3 bg-accentBlue text-white rounded-full font-title hover:bg-blue-700 transition"
                       >
-                        Escolher Ferramenta
+                        Abrir: {toolNames[message.suggestedToolId || ''] || 'Ferramentas Criativas'}
                       </button>
                     )}
                   </>

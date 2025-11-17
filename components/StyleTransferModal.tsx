@@ -126,6 +126,7 @@ const StyleTransferModal: React.FC<StyleTransferModalProps> = ({ isOpen, onClose
   const handleConfirmAction = () => {
     if (image && prompt.trim()) {
       onConfirm(image.file, prompt.trim());
+      handleClose();
     }
   };
 

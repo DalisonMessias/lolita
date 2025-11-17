@@ -229,6 +229,16 @@ const ChatScreen: React.FC<ChatScreenProps> = ({
               onRegenerate={onRegenerate}
               onViewImage={onViewImage}
               onOpenCreativeToolsModal={onOpenCreativeToolsModal}
+              onOpenClothingSwapModal={onOpenClothingSwapModal}
+              onOpenFaceSwapModal={onOpenFaceSwapModal}
+              onOpenFaceTreatmentModal={onOpenFaceTreatmentModal}
+              onOpenAnimateImageModal={onOpenAnimateImageModal}
+              onOpenChangeBackgroundModal={onOpenChangeBackgroundModal}
+              onOpenNativeEditModal={onOpenNativeEditModal}
+              onOpenMagicEraserModal={onOpenMagicEraserModal}
+              onOpenRestorePhotoModal={onOpenRestorePhotoModal}
+              onOpenStyleTransferModal={onOpenStyleTransferModal}
+              onOpenAgeChangeModal={onOpenAgeChangeModal}
             />
           ))}
         </div>

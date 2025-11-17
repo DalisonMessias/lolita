@@ -312,14 +312,14 @@ const App: React.FC = () => {
         })
     );
 
-    if (!userMessage || !userMessage.content) {
+    if (!userMessage || (!userMessage.content && (!userMessage.imageUrls || userMessage.imageUrls.length === 0))) {
         setStatus(AppStatus.ERROR);
         addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'system-info', content: 'Erro: Não foi possível encontrar o prompt original para regenerar.', timestamp: new Date() });
         return;
     }
 
     try {
-        const aiResponse = await generateContent(userMessage.content!, historyForRegen);
+        const aiResponse = await generateContent(userMessage.content || '', historyForRegen);
         const newAiMessage: ChatMessage = {
             id: uuidv4(),
             sender: 'ai',
@@ -518,6 +518,8 @@ const App: React.FC = () => {
   const handleToolAction = async (
     action: (...args: any[]) => Promise<any>,
     options: {
+        userMessageContent: string;
+        userMessageFiles?: File[];
         loadingMessage: string;
         successMessage: string;
         errorMessageContext: string;
@@ -525,8 +527,21 @@ const App: React.FC = () => {
     },
     ...args: any[]
   ) => {
+    // 1. Create and add user message to the chat history
+    const userMessageImageUrls = options.userMessageFiles?.map(f => URL.createObjectURL(f));
+    const userMessage: ChatMessage = {
+      id: uuidv4(),
+      sender: 'user',
+      type: userMessageImageUrls && userMessageImageUrls.length > 0 ? 'image-upload' : 'text',
+      content: options.userMessageContent,
+      imageUrls: userMessageImageUrls,
+      timestamp: new Date(),
+    };
+    addMessageToConversation(userMessage);
+
+    // 2. Add loading indicator and perform AI action
     setStatus(AppStatus.LOADING);
-    const { loadingMessage, successMessage, errorMessageContext, sourceFileForHistory } = options;
+    const { loadingMessage, successMessage, errorMessageContext } = options;
     addMessageToConversation({ id: uuidv4(), sender: 'ai', type: 'loading-indicator', content: loadingMessage, timestamp: new Date() });
 
     try {
@@ -543,7 +558,14 @@ const App: React.FC = () => {
               message.type = 'video-generated';
               message.videoUrl = result;
           } else {
-             const originalSrcFile = sourceFileForHistory || (args.find(arg => arg instanceof File) as File | undefined);
+             // The source file for history should be the main image the user is editing.
+             // If not explicitly provided, default to the first file in the user's message.
+             const originalSrcFile = options.sourceFileForHistory || options.userMessageFiles?.[0];
+             
+             if (!originalSrcFile) {
+                 console.warn("sourceFileForHistory was not provided for a tool that generates an image.");
+             }
+
              const newHistoryEntry: EnhancedImageHistoryEntry = {
                 id: uuidv4(),
                 originalImageSrc: originalSrcFile ? URL.createObjectURL(originalSrcFile) : '', 
@@ -579,6 +601,7 @@ const App: React.FC = () => {
     }
   };
 
+
   const fileToB64 = (file: File) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve((reader.result as string).split(',')[1]);
@@ -592,6 +615,8 @@ const App: React.FC = () => {
     handleToolAction(
         swapClothing, 
         {
+            userMessageContent: 'Realizar troca de roupa com as imagens fornecidas.',
+            userMessageFiles: [personFile, clothingFile],
             loadingMessage: 'A realizar a troca de roupa...',
             successMessage: 'Troca de roupa concluída com sucesso!',
             errorMessageContext: 'trocar a roupa',
@@ -613,6 +638,8 @@ const App: React.FC = () => {
     handleToolAction(
         swapFace, 
         {
+            userMessageContent: 'Realizar troca de rosto com as imagens fornecidas.',
+            userMessageFiles: [targetFile, sourceFile],
             loadingMessage: 'A realizar a troca de rosto...',
             successMessage: 'Troca de rosto concluída com sucesso!',
             errorMessageContext: 'trocar o rosto',
@@ -625,9 +652,12 @@ const App: React.FC = () => {
   const handleFaceTreatment = (file: File) => handleToolAction(
     async (imgFile: File) => performFaceTreatment(await fileToB64(imgFile), imgFile.type),
     {
+        userMessageContent: 'Aplicar tratamento de rosto a esta imagem.',
+        userMessageFiles: [file],
         loadingMessage: 'A aplicar tratamento ao rosto...',
         successMessage: 'Tratamento de rosto concluído!',
-        errorMessageContext: 'realizar o tratamento de rosto'
+        errorMessageContext: 'realizar o tratamento de rosto',
+        sourceFileForHistory: file
     },
     file
   );
@@ -635,6 +665,8 @@ const App: React.FC = () => {
   const handleAnimateImage = (file: File, prompt: string | null, aspectRatio: '16:9' | '9:16') => handleToolAction(
     async (imgFile: File, p: string | null, ar: '16:9' | '9:16') => animateImageWithVeo(await fileToB64(imgFile), imgFile.type, p, ar), 
     {
+        userMessageContent: `Animar imagem com Veo. ${prompt ? `Prompt: "${prompt}"` : ''}`,
+        userMessageFiles: [file],
         loadingMessage: 'A animar a sua imagem com o Veo... Isto pode demorar alguns minutos.',
         successMessage: 'Vídeo gerado com sucesso!',
         errorMessageContext: 'animar a imagem com Veo'
@@ -645,9 +677,12 @@ const App: React.FC = () => {
   const handleChangeBackground = (file: File, prompt: string) => handleToolAction(
     async (imgFile: File, p: string) => changeImageBackground(await fileToB64(imgFile), imgFile.type, p), 
     {
+        userMessageContent: `Alterar o fundo da imagem para: "${prompt}"`,
+        userMessageFiles: [file],
         loadingMessage: 'A alterar o fundo...',
         successMessage: 'Fundo alterado com sucesso!',
-        errorMessageContext: 'alterar o fundo da imagem'
+        errorMessageContext: 'alterar o fundo da imagem',
+        sourceFileForHistory: file
     },
     file, prompt
   );
@@ -655,9 +690,12 @@ const App: React.FC = () => {
   const handleRemoveObject = (file: File, maskB64: string) => handleToolAction(
     async (imgFile: File, mB64: string) => removeObjectFromImage(await fileToB64(imgFile), imgFile.type, mB64), 
     {
+        userMessageContent: 'Remover o objeto selecionado da imagem.',
+        userMessageFiles: [file],
         loadingMessage: 'A remover o objeto...',
         successMessage: 'Objeto removido com sucesso!',
-        errorMessageContext: 'remover o objeto da imagem'
+        errorMessageContext: 'remover o objeto da imagem',
+        sourceFileForHistory: file
     },
     file, maskB64
   );
@@ -665,9 +703,12 @@ const App: React.FC = () => {
   const handleRestorePhoto = (file: File) => handleToolAction(
     async (imgFile: File) => restoreOldPhoto(await fileToB64(imgFile), imgFile.type), 
     {
+        userMessageContent: 'Restaurar esta foto antiga.',
+        userMessageFiles: [file],
         loadingMessage: 'A restaurar a foto...',
         successMessage: 'Foto restaurada com sucesso!',
-        errorMessageContext: 'restaurar a foto antiga'
+        errorMessageContext: 'restaurar a foto antiga',
+        sourceFileForHistory: file
     },
     file
   );
@@ -675,9 +716,12 @@ const App: React.FC = () => {
   const handleStyleTransfer = (file: File, prompt: string) => handleToolAction(
     async (imgFile: File, p: string) => transferImageStyle(await fileToB64(imgFile), imgFile.type, p),
     {
+        userMessageContent: `Aplicar estilo artístico: "${prompt}"`,
+        userMessageFiles: [file],
         loadingMessage: 'A aplicar o estilo artístico...',
         successMessage: 'Estilo aplicado com sucesso!',
-        errorMessageContext: 'aplicar o estilo artístico'
+        errorMessageContext: 'aplicar o estilo artístico',
+        sourceFileForHistory: file
     },
     file, prompt
   );
@@ -685,9 +729,12 @@ const App: React.FC = () => {
   const handleChangeAge = (file: File, currentAge: number, desiredAge: number, mode: 'rejuvenate' | 'age') => handleToolAction(
     async (imgFile: File, cAge: number, dAge: number, m: 'rejuvenate'|'age') => changeAge(await fileToB64(imgFile), imgFile.type, cAge, dAge, m),
     {
+        userMessageContent: `${mode === 'age' ? 'Envelhecer' : 'Rejuvenescer'} de ${currentAge} para ${desiredAge} anos.`,
+        userMessageFiles: [file],
         loadingMessage: 'A alterar a idade...',
         successMessage: 'Idade alterada com sucesso!',
-        errorMessageContext: 'alterar a idade da pessoa'
+        errorMessageContext: 'alterar a idade da pessoa',
+        sourceFileForHistory: file
     },
     file, currentAge, desiredAge, mode
   );

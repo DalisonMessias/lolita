@@ -124,6 +124,7 @@ const FaceTreatmentSelectionModal: React.FC<FaceTreatmentSelectionModalProps> = 
   const handlePerformTreatment = () => {
     if (image) {
       onPerformTreatment(image.file);
+      handleClose();
     }
   };
 
