@@ -1,0 +1,5 @@
+fix: Corrigido erro de sintaxe CSS em keyframes no index.html
+
+O erro "Unknown word translateY" durante o build no Vercel foi corrigido.
+A propriedade 'translateY' dentro dos keyframes 'slideInUp' e 'slideOutDown'
+no index.html foi alterada para 'transform: translateY' para seguir a sintaxe CSS correta.
