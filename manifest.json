@@ -1,0 +1,23 @@
+{
+  "short_name": "Lolita",
+  "name": "Lolita",
+  "description": "Melhore suas fotos com IA.",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/DalisonMessias/cdn.rabbit.gg/main/assets/logo-revo.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/DalisonMessias/cdn.rabbit.gg/main/assets/logo-revo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#131314",
+  "theme_color": "#1E1F20"
+}

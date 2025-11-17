@@ -1,0 +1,193 @@
+<script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.1",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "uuid": "https://aistudiocdn.com/uuid@^13.0.0"
+  }
+}
+</script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Photo Enhancer</title>
+    <!-- PWA Additions -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#1E1F20">
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        appBg: '#131314',
+                        appHeaderBg: '#1E1F20',
+                        inputBg: '#1E1F20',
+                        borderColor: '#393B3D',
+                        userBubble: '#262D31',
+                        aiBubble: '#27292D',
+                        primaryText: '#E3E3E3',
+                        secondaryText: '#949597',
+                        primaryAccent: '#970167',
+                        primaryAccentDark: '#790152',
+                        accentBlue: '#3498DB',
+                        inactiveButtonBg: '#393B3D',
+                        inactiveButtonText: '#E3E3E3',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        title: ['TitleFont', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Font */
+        @font-face {
+            font-family: 'TitleFont';
+            src: url('https://raw.githubusercontent.com/DalisonMessias/cdn.rabbit.gg/main/assets/AmsiProNarw-Ultra.otf') format('opentype');
+        }
+
+        /* General Styles */
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .icon-effect {
+          filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
+        }
+
+        /* Custom Scrollbar Styles */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1E1F20;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #393B3D;
+            border-radius: 4px;
+            border: 2px solid #1E1F20;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: #555;
+        }
+
+        /* Animation Keyframes */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes scaleIn { from { transform: scale(0.95); } to { transform: scale(1); } }
+        @keyframes scaleOut { from { transform: scale(1); } to { transform: scale(0.95); } }
+        @keyframes slideInUp { from { transform: translateY(100%); } to { translateY(0); } }
+        @keyframes slideOutDown { from { transform: translateY(0); } to { transform: translateY(100%); } }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        /* Animation Classes */
+        .modal-backdrop {
+            animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        .modal-backdrop.animate-out {
+            animation: fadeOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+
+        .modal-content {
+            animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards, scaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        .modal-content.animate-out {
+            animation: fadeOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards, scaleOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+
+        .fullscreen-view {
+            animation: slideInUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        .fullscreen-view.animate-out {
+            animation: slideOutDown 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        
+        .control-fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+
+        /* Hide Scrollbar Utility */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        /* Loader Styles */
+        #loader {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            background-color: #131314;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease-out;
+        }
+        #loader img {
+            width: 100px;
+            height: 100px;
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        #loader.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-appBg">
+    <!-- Loader -->
+    <div id="loader">
+        <img src="https://raw.githubusercontent.com/DalisonMessias/cdn.rabbit.gg/main/assets/logo-revo.png" alt="Loading...">
+    </div>
+    
+    <div id="root" class="h-screen w-screen overflow-hidden"></div>
+    <script type="module" src="index.tsx"></script>
+
+    <!-- PWA Service Worker Registration -->
+    <script>
+      const hideLoader = () => {
+        const loader = document.getElementById('loader');
+        if (loader) {
+            setTimeout(() => {
+                loader.classList.add('hidden');
+            }, 4000);
+        }
+      };
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('ServiceWorker registration successful with scope: ', registration.scope);
+            })
+            .catch(error => {
+              console.log('ServiceWorker registration failed: ', error);
+            });
+          
+          hideLoader();
+        });
+      } else {
+         window.addEventListener('load', hideLoader);
+      }
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>

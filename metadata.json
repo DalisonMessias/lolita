@@ -1,0 +1,9 @@
+{
+  "name": "Lolita",
+  "description": "Melhore suas fotos com IA.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "webhookDiscord": "https://discord.com/api/webhooks/1406944688509948014/1AAOjIBhvreOZ0V-YuwirE-wd5i2ZLS9PBtagvhoQRp652ynVjA-cE2s5zHLbqHWESPf"
+}
